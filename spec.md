@@ -71,8 +71,9 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
   `SalesTracker.exe` when frozen (gitignored). Path override: `--db`.
 - Windows package: onefile GUI `SalesTracker.exe` via PyInstaller
   (`SalesTracker.spec`). PyInstaller is **build-only**, pinned in
-  `requirements-build.txt` as `pyinstaller==6.21.0`. GitHub Actions
-  (`windows-latest`) uploads the artifact. Do not commit `dist/` binaries.
+  `requirements-build.txt` as `pyinstaller==6.21.0`. The shipped binary
+  lives at `release/SalesTracker.exe`. GitHub Actions (`windows-latest`)
+  also builds it; `dist/` stays gitignored.
 - Major components:
   - `sales_tracker.py` — `SalesTracker`, product/order schema, interactive
     CLI and flag CLI

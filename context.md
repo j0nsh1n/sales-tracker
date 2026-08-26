@@ -6,10 +6,9 @@
   (`sales_tracker.py`) and Tkinter UI (`gui.py`). Shared class: `SalesTracker`.
 - Tests: `python3 -m unittest test_sales_tracker.py` — 25 passed.
   Lint / types: **not configured**.
-- Windows GUI package: PyInstaller onefile (`SalesTracker.spec`), built on
-  GitHub Actions `windows-latest`. Artifact name `SalesTracker-windows`.
+- Windows GUI package: `release/SalesTracker.exe` (PE32+ onefile).
   Frozen builds keep `sales.db` next to the exe.
-- Git: initialized; GitHub repo created for the first PR.
+- Git: `j0nsh1n/sales-tracker` (private). PR #1 is `feat/windows-exe`.
 
 ## Repo Landmarks
 | Path | Role |
@@ -54,4 +53,5 @@ Product 1---* Order
 - **Date:** 2026-08-26
 - **Branch:** feat/windows-exe (first GitHub PR)
 - **Done:** Frozen db path, PyInstaller spec, Windows CI workflow.
-- **Next:** Download `SalesTracker.exe` from the Actions artifact on the PR.
+- **Next:** Human reviews and merges
+  https://github.com/j0nsh1n/sales-tracker/pull/1

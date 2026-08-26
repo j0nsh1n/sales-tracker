@@ -20,9 +20,8 @@ python3 sales_tracker.py list
 python3 sales_tracker.py reset --orders --yes
 ```
 
-Windows: GitHub Actions builds `SalesTracker.exe` (one-file GUI). Download
-the **SalesTracker-windows** artifact from the workflow run. Double-click
-the exe; `sales.db` is created next to it. Rebuild locally on Windows with:
+Windows: a one-file GUI is at [`release/SalesTracker.exe`](release/SalesTracker.exe).
+Double-click it; `sales.db` is created next to the exe. Rebuild on Windows with:
 
 ```bat
 python -m pip install -r requirements-build.txt
