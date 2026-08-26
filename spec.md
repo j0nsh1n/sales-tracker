@@ -1,0 +1,142 @@
+# spec.md — Sales Tracker App
+
+## Problem
+A solo seller needs to **establish what they sell**, **log who bought how
+many**, and **tick people off as they receive their order** — including
+partial hand-offs (Jim ordered 10, has received 5). Orders must not vanish
+from a stray delete; they stay until an explicit reset in Settings. This
+app is a local order list with fulfillment tracking. It is **not** a
+payment processor, inventory system, tax filer, CRM, or double-entry ledger.
+
+## Intended Users
+- **Solo seller / small-business operator** running the app on their own
+  machine (desktop GUI or terminal)
+- **Not** a public multi-tenant SaaS, not an accountant's books, not a
+  shared cloud service
+
+## Required Behavior
+- **Establish a product first**, through a short interactive series of
+  inputs (name; how it is counted; price per unit, 0 allowed; optional SKU;
+  optional notes; review/confirm). Logging an order is blocked until at
+  least one product exists. Duplicate product names (case-insensitive) are
+  rejected. More than one product is allowed; the operator then chooses
+  which product an order is for.
+- **Log an order:** purchaser name + quantity bought (must be > 0). The
+  order is appended to a persistent list. Received starts at 0.
+- **Fulfillment:** on a selected order, the operator enters how many have
+  been handed out so far (example: Jim needs 10, received-so-far box = 5).
+  Received must be ≥ 0 and ≤ ordered. Marking the name received (received
+  ≥ ordered) does **not** remove the row. Filter the list: all /
+  outstanding / received. Search by purchaser or product name.
+- **Orders never disappear** except via Settings reset. There is no
+  per-order delete in the GUI or CLI.
+- **Settings:**
+  - Reset all orders (keeps products)
+  - Reset everything (products and orders)
+  Both require an explicit confirmation the operator cannot hit by accident
+  (GUI: type `RESET`; CLI: `--yes` plus `--orders` or `--all`).
+- **Empty states** when there are no products or no orders. Invalid input
+  fails closed: no partial row is written.
+- **Money:** optional. Stored as `decimal.Decimal` quantized to 0.01,
+  persisted as TEXT. Display as USD (`$1,240.00`) until this spec says
+  otherwise. Quantity allows fractions (quantized to 0.001) so units such
+  as lb still work.
+- Line total is computed (`quantity_ordered × unit_price`), not stored.
+- An order is **outstanding** when received < ordered, **received** when
+  received ≥ ordered.
+
+## User Experience
+- Two entry points share one `SalesTracker` and one SQLite file:
+  - Desktop: `python3 gui.py`
+  - Script: `python3 sales_tracker.py` (interactive menu) or subcommands
+    (`product`, `order`, `receive`, `list`, `summary`, `reset`, …)
+- GUI: product wizard on first run if the catalog is empty; order ticket
+  (purchaser + quantity); list with received/ordered; a separate
+  received-so-far box for the selected row; Settings in the Ledger menu
+  and header.
+- CLI interactive session asks one question at a time for product setup,
+  logging, and received-so-far updates.
+- Example: establish Honey (jar, $12.50) → log Jim bought 10 → enter 5 in
+  received so far → row still shows Jim 5 / 10 outstanding → later 10 / 10
+  received, still on the list → Settings reset is the only clear.
+- No web server, no `/health`, no browser UI.
+
+## Architecture
+- Language/runtime: **Python 3.14**. Agents use 3.14 locally. Do not
+  downgrade.
+- Stack: **Python standard library only** at runtime (sqlite3, tkinter,
+  argparse, unittest). No FastAPI, no npm, no frontend build. New runtime
+  dependencies need justification, a pin, and a spec update.
+- Storage: SQLite file `sales.db` next to the scripts, or next to
+  `SalesTracker.exe` when frozen (gitignored). Path override: `--db`.
+- Windows package: onefile GUI `SalesTracker.exe` via PyInstaller
+  (`SalesTracker.spec`). PyInstaller is **build-only**, pinned in
+  `requirements-build.txt` as `pyinstaller==6.21.0`. The shipped binary
+  lives at `release/SalesTracker.exe`. GitHub Actions (`windows-latest`)
+  also builds it; `dist/` stays gitignored.
+- Major components:
+  - `sales_tracker.py` — `SalesTracker`, product/order schema, interactive
+    CLI and flag CLI
+  - `gui.py` — Tkinter ledger (product wizard, list, received box, Settings)
+  - `test_sales_tracker.py` — unittest (library, CLI, interactive session,
+    GUI smoke)
+  - `SalesTracker.spec` / `requirements-build.txt` — Windows exe packaging
+- Data model:
+
+  ```
+  Product 1---* Order
+  ```
+
+  - **Product:** id, name, unit, unit_price, sku, notes, created_at
+  - **Order:** id, product_id, purchaser, quantity_ordered,
+    quantity_received, created_at, updated_at
+- If a legacy `sales` table is present, migrate it into products + orders
+  (received starts at 0) and drop `sales`.
+- External APIs/services: **none**. No Stripe, Shopify, email, or LLM.
+
+## Security & Privacy
+- No secrets in source. No accounts, no network auth.
+- Purchaser names and product data stay on the machine. Do not log extra
+  copies of purchaser names.
+- This app never stores card numbers, bank accounts, or payment tokens.
+- Reset is destructive and local-only; require the confirmation described
+  above.
+- Dependencies: prefer stdlib. Dependabot is **not required** unless the
+  human enables it.
+
+## Validation & Tooling
+- Tests: `python3 -m unittest test_sales_tracker.py` — must pass.
+- Lint / types: **not configured**. Treat `ruff` / `pyright` as report-only
+  until `pyproject.toml` / `pyrightconfig.json` exist. Do not install that
+  tooling on your own initiative.
+- Do not add a runtime `requirements.txt` until a third-party runtime
+  package is actually approved. `requirements-build.txt` is packaging-only.
+
+## Project workflow (spec overrides / alignment with agents.md)
+- Push / open PRs only when the human explicitly asks in the current
+  conversation.
+- Prefer task branches when committing; default branch should stay green.
+- Update `context.md` (state + handoff) and `CHANGELOG.md` (user-visible
+  history) per `agents.md`.
+- Do not put policy rules in `context.md`, `roadmap.md`, or `CHANGELOG.md`.
+
+## Acceptance Criteria
+- [x] Operator cannot log an order until a product has been established
+- [x] Product setup is a series of interactive inputs (name, unit, price,
+      optional SKU, optional notes, confirm)
+- [x] Operator can log purchaser name + quantity; the row appears on the list
+- [x] Operator can set received-so-far (e.g. 5 of 10); the row stays
+- [x] A fully received name stays on the list until Settings reset
+- [x] Received > ordered or negative received is rejected; no partial write
+- [x] There is no per-order delete in the GUI or CLI
+- [x] Settings reset (confirmed) is the only way to clear orders
+- [x] CLI and GUI share one SQLite ledger
+- [x] `python3 -m unittest test_sales_tracker.py` exits 0
+- [ ] CHANGELOG.md updated for later user-visible releases
+
+## Out of scope (until a later approved phase)
+- Web UI, FastAPI, `/health`, `run_dev.sh`
+- Separate customer records (contact, notes) beyond purchaser name on an order
+- Refund / cancel status, inventory, tax, invoicing, CSV export
+- Multi-user login, multi-currency, payment processors
+- Integer-cents storage (Decimal TEXT is the contract)
