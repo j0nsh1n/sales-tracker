@@ -67,20 +67,21 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
 - Stack: **Python standard library only** at runtime (sqlite3, tkinter,
   argparse, unittest). No FastAPI, no npm, no frontend build. New runtime
   dependencies need justification, a pin, and a spec update.
-- Storage: SQLite file `sales.db` next to the scripts, or next to
-  `SalesTracker.exe` when frozen (gitignored). Path override: `--db`.
-- Windows package: onefile GUI `SalesTracker.exe` via PyInstaller
-  (`SalesTracker.spec`). PyInstaller is **build-only**, pinned in
-  `requirements-build.txt` as `pyinstaller==6.21.0`. The shipped binary
-  lives at `release/SalesTracker.exe`. GitHub Actions (`windows-latest`)
-  also builds it; `dist/` stays gitignored.
+- Storage: SQLite file `sales.db` next to the scripts, or next to the
+  frozen binary (gitignored). Path override: `--db`.
+- Packaged GUI: PyInstaller onefile via `SalesTracker.spec`. PyInstaller
+  is **build-only**, pinned in `requirements-build.txt` as
+  `pyinstaller==6.21.0`. Shipped binaries:
+  - `release/SalesTracker.exe` — Windows PE32+
+  - `release/SalesTracker-linux-x86_64` — Linux ELF x86-64
+  GitHub Actions also builds the Windows exe; `dist/` stays gitignored.
 - Major components:
   - `sales_tracker.py` — `SalesTracker`, product/order schema, interactive
     CLI and flag CLI
   - `gui.py` — Tkinter ledger (product wizard, list, received box, Settings)
   - `test_sales_tracker.py` — unittest (library, CLI, interactive session,
     GUI smoke)
-  - `SalesTracker.spec` / `requirements-build.txt` — Windows exe packaging
+  - `SalesTracker.spec` / `requirements-build.txt` — frozen GUI packaging
 - Data model:
 
   ```

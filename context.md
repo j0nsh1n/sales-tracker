@@ -6,8 +6,9 @@
   (`sales_tracker.py`) and Tkinter UI (`gui.py`). Shared class: `SalesTracker`.
 - Tests: `python3 -m unittest test_sales_tracker.py` — 25 passed.
   Lint / types: **not configured**.
-- Windows GUI package: `release/SalesTracker.exe` (PE32+ onefile).
-  Frozen builds keep `sales.db` next to the exe.
+- Frozen GUI: `release/SalesTracker.exe` (Windows PE32+) and
+  `release/SalesTracker-linux-x86_64` (Linux ELF). `sales.db` lives next
+  to the binary.
 - Git: `j0nsh1n/sales-tracker` (private). PR #1 is `feat/windows-exe`.
 
 ## Repo Landmarks
@@ -16,7 +17,8 @@
 | `sales_tracker.py` | Products, orders, fulfillment, interactive CLI, reset |
 | `gui.py` | Product wizard, order list, received box, Settings |
 | `test_sales_tracker.py` | unittest for library, CLI, interactive session, GUI |
-| `SalesTracker.spec` | PyInstaller spec for `SalesTracker.exe` |
+| `SalesTracker.spec` | PyInstaller spec for frozen GUI builds |
+| `release/` | `SalesTracker.exe`, `SalesTracker-linux-x86_64` |
 | `requirements-build.txt` | Build-only pin: pyinstaller==6.21.0 |
 | `.github/workflows/build-windows-exe.yml` | Windows exe CI |
 | `agents.md` | Global coding rules |
@@ -47,11 +49,12 @@ Product 1---* Order
 - GUI auto-opens the product wizard when the catalog is empty.
 - Settings reset requires typing RESET so it cannot be a stray click.
 - PyInstaller is build-only, not a runtime dependency.
-- This Linux host cannot emit a PE `.exe`; Windows CI does.
+- Linux frozen binary was built natively here; Windows exe was Wine + CI.
 
 ## Session Handoff
 - **Date:** 2026-08-26
-- **Branch:** feat/windows-exe (first GitHub PR)
-- **Done:** Frozen db path, PyInstaller spec, Windows CI workflow.
-- **Next:** Human reviews and merges
+- **Branch:** feat/windows-exe
+- **Done:** Linux onefile GUI at `release/SalesTracker-linux-x86_64`
+  (smoke-tested: process stayed up, created `--db` file).
+- **Next:** Human reviews
   https://github.com/j0nsh1n/sales-tracker/pull/1

@@ -1,4 +1,4 @@
-# PyInstaller spec for the Windows GUI build.
+# PyInstaller spec for the GUI build (Windows .exe or Linux ELF).
 # Runtime stays stdlib-only. This file is used only when packaging.
 
 from PyInstaller.utils.hooks import collect_all

@@ -20,12 +20,23 @@ python3 sales_tracker.py list
 python3 sales_tracker.py reset --orders --yes
 ```
 
-Windows: a one-file GUI is at [`release/SalesTracker.exe`](release/SalesTracker.exe).
-Double-click it; `sales.db` is created next to the exe. Rebuild on Windows with:
+Packaged GUI (no Python install needed):
 
-```bat
-python -m pip install -r requirements-build.txt
-python -m PyInstaller --noconfirm SalesTracker.spec
+```bash
+# Linux (this machine)
+./release/SalesTracker-linux-x86_64
+
+# Windows
+release\SalesTracker.exe
+```
+
+`sales.db` is created next to the binary. Rebuild:
+
+```bash
+python3 -m pip install -r requirements-build.txt
+python3 -m PyInstaller --noconfirm SalesTracker.spec
+# Linux output: dist/SalesTracker
+# Windows output: dist/SalesTracker.exe
 ```
 
 This is a sales log with fulfillment tracking — not a CRM, not accounting

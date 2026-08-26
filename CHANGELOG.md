@@ -14,7 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   box (for example Jim 5 of 10). Fully received rows stay on the list.
 - Settings reset (type RESET) as the only way to clear orders.
 - Windows GUI package: `release/SalesTracker.exe` (PyInstaller onefile).
-  When frozen, `sales.db` is stored next to the executable.
+- Linux GUI package: `release/SalesTracker-linux-x86_64` (PyInstaller
+  onefile ELF). When frozen, `sales.db` is stored next to the binary.
 
 ### Changed
 - Ledger is now products + orders with fulfillment, not free-text sale lines.
