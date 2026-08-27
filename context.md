@@ -107,15 +107,16 @@ Product 1---* Order
 
 ## Session Handoff
 - **Date:** 2026-08-27
-- **Branch:** fix/touchpad-scrolling
-- **Done:** v0.1.2 released (dark mode + the scrolling, dialog placement
-  and label fixes); both binaries attached. Then fixed touchpad scrolling
-  in dialogs: the wheel handler truncated sub-notch deltas to zero.
-- **Verified:** 80 tests green on Windows. The new test fails on the old
-  arithmetic at deltas of 40, 20 and 12 and passes at 120, which is
-  exactly the reported symptom.
-- **Open:** not yet released; would be 0.1.3. The Wine path of the smoke
-  test is still unrun. `v0.1.0`'s release notes should point users at a
-  newer version, since its exe predates the launch fix. Coins not
-  handled. Extra payment methods (zelle/card) need a spec line.
-- **Next:** decide whether to cut 0.1.3.
+- **Branch:** main (PR #5 merged)
+- **Done:** v0.1.2 released, then touchpad scrolling fixed and cut as
+  0.1.3. Wheel handling is now ours on every scrollable surface rather
+  than Tk's, because Tk 8.6 rounds sub-notch deltas to zero.
+- **Verified:** 80 tests green on Windows and on CI; PR #5 passed tests,
+  windows-exe and linux-elf. Both scroll paths exercised by forcing the
+  fractional probe off.
+- **Open:** the Wine path of the smoke test is still unrun. `v0.1.0`'s
+  release notes should point users at a newer version, since its exe
+  predates the launch fix. Coins not handled. Extra payment methods
+  (zelle/card) need a spec line. History still holds 30 MB of old
+  binaries.
+- **Next:** nothing outstanding; 0.1.3 is the current release.

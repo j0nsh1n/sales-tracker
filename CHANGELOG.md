@@ -6,15 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Fixed
-- Scrolling a dialog with a touchpad did nothing; only dragging the
-  scrollbar worked. One notch of a mouse wheel reports 120 and the
-  handler divided by that and rounded down to a whole number, so the
-  smaller amounts a precision touchpad sends were all rounded away to
-  zero. The order list had the same problem on Linux, where the Tk
-  version does that rounding itself. Both now keep the leftover and
-  spend it once it adds up, so a touchpad scrolls everywhere.
-
 ### Added
 - Project governance set: `agents.md`, `spec.md`, `roadmap.md`, `context.md`,
   `CHANGELOG.md`, short `README.md`, and `.gitignore`.
@@ -89,6 +80,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   by name.
 - A tracker whose startup failed kept the database write-locked for the rest
   of the process.
+
+## [0.1.3] - 2026-08-27
+
+### Fixed
+- Scrolling a dialog with a touchpad did nothing; only dragging the
+  scrollbar worked. One notch of a mouse wheel reports 120 and the
+  handler divided by that and rounded down to a whole number, so the
+  smaller amounts a precision touchpad sends were all rounded away to
+  zero. The order list had the same problem on Linux, where the Tk
+  version does that rounding itself. Both now keep the leftover and
+  spend it once it adds up, so a touchpad scrolls everywhere.
 
 ## [0.1.2] - 2026-08-27
 
