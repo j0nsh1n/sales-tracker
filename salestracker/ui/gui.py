@@ -40,27 +40,47 @@ from salestracker import (
 )
 from tkinter import filedialog
 
-# Neutral surfaces, one accent, monospace reserved for figures. Every text
-# pair below clears WCAG AA (4.5:1); see docs/design/ for the rendered look.
-BG = "#FFFFFF"          # page
-PANEL = "#F7F8F8"       # raised surface: entry bar and dialogs
-SUBTLE = "#EFF1F0"      # pressed / hover fill
-INK = "#16191B"
-MUTED = "#5F6B66"
-ACCENT = "#0B6E4F"
-ACCENT_DARK = "#095540"
-ACCENT_SOFT = "#E8F2EC"  # selected row
-DANGER = "#A61B1B"
-LINE = "#E3E5E4"
-ROW_ALT = SUBTLE
-FOCUS = ACCENT
-WHITE = "#FFFFFF"
-RECEIVED_BG = "#F1F7F3"
+from salestracker.ui import theme
+
+# Neutral surfaces, one accent, monospace reserved for figures. The values
+# come from salestracker.ui.theme and are rebound onto this module whenever the
+# operator switches theme, so read them at call time -- never capture one in a
+# default argument or copy it into a constant of your own, or that widget will
+# keep the old theme's colour after a switch.
+BG = PANEL = SUBTLE = INK = MUTED = ""
+ACCENT = ACCENT_DARK = ACCENT_SOFT = ""
+DANGER = DANGER_SOFT = DISABLED = ""
+LINE = ROW_ALT = FOCUS = FIELD = ON_ACCENT = RECEIVED_BG = ""
+
+
+def apply_palette(choice: str) -> str:
+    """Bind the palette for `choice` onto this module; returns what it painted."""
+    resolved = theme.resolve(choice)
+    globals().update(theme.PALETTES[resolved])
+    return resolved
+
+
+apply_palette(theme.DEFAULT_CHOICE)
 
 # Widgets that scroll themselves. The wheel is left alone over these, so one
 # flick moves the list under the pointer instead of the list and the panel
 # behind it at the same time.
 SELF_SCROLLING = (ttk.Treeview, tk.Listbox, tk.Text)
+
+# Key under which the appearance choice is kept in the ledger's settings table.
+THEME_SETTING = "theme"
+
+
+def _descendant_canvases(widget: tk.Misc) -> list[tk.Canvas]:
+    """Every Canvas under widget. These hold a colour ttk styles cannot set."""
+    found: list[tk.Canvas] = []
+    stack = list(widget.winfo_children())
+    while stack:
+        child = stack.pop()
+        if isinstance(child, tk.Canvas):
+            found.append(child)
+        stack.extend(child.winfo_children())
+    return found
 
 
 def center_on_parent(window: tk.Toplevel, parent: tk.Misc) -> None:
@@ -310,6 +330,7 @@ class SettingsDialog(tk.Toplevel):
 
     def __init__(self, master: tk.Tk, tracker: SalesTracker, on_change) -> None:
         super().__init__(master)
+        self.app = master
         self.tracker = tracker
         self.on_change = on_change
         self.title("Settings")
@@ -329,6 +350,27 @@ class SettingsDialog(tk.Toplevel):
             style="Hint.TLabel",
             wraplength=560,
         ).pack(anchor="w", pady=(6, 14))
+
+        ttk.Label(pad, text="APPEARANCE", style="Field.TLabel").pack(anchor="w")
+        ttk.Label(
+            pad,
+            text="System follows your desktop and changes with it. "
+            "Light and Dark stay put.",
+            style="Hint.TLabel",
+            wraplength=560,
+        ).pack(anchor="w", pady=(2, 6))
+        self.var_theme = tk.StringVar(value=getattr(master, "theme_choice", theme.SYSTEM))
+        themes = ttk.Frame(pad, style="Panel.TFrame")
+        themes.pack(anchor="w", fill="x", pady=(0, 16))
+        for choice in theme.THEME_CHOICES:
+            ttk.Radiobutton(
+                themes,
+                text=theme.THEME_LABELS[choice],
+                value=choice,
+                variable=self.var_theme,
+                style="Panel.TRadiobutton",
+                command=self._change_theme,
+            ).pack(side="left", padx=(0, 18))
 
         ttk.Label(pad, text="LEDGER FILE", style="Field.TLabel").pack(anchor="w")
         ttk.Label(pad, text=str(tracker.db_path), style="Hint.TLabel", wraplength=560).pack(
@@ -400,6 +442,12 @@ class SettingsDialog(tk.Toplevel):
         self.bind("<Escape>", lambda _e: self.destroy())
         self._reload()
         center_on_parent(self, master)
+
+    def _change_theme(self) -> None:
+        """Repaint immediately; the main window persists the choice."""
+        setter = getattr(self.app, "set_theme", None)
+        if setter is not None:
+            setter(self.var_theme.get())
 
     def _picker(
         self,
@@ -758,6 +806,15 @@ class SalesApp(tk.Tk):
         self._editor: ttk.Entry | None = None
         self._row_error: ttk.Label | None = None
         self._flash_job: str | None = None
+        self._theme_job: str | None = None
+        self._rules: list[tk.Frame] = []
+
+        # Paint before any widget is built, so nothing is created in the
+        # outgoing theme's colours.
+        self.theme_choice = theme.normalize_choice(
+            self.tracker.get_setting(THEME_SETTING, theme.DEFAULT_CHOICE)
+        )
+        self.theme_painted = apply_palette(self.theme_choice)
 
         self.title("Sales Tracker")
         self.minsize(940, 580)
@@ -774,8 +831,44 @@ class SalesApp(tk.Tk):
         self._binds()
         self.refresh()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._watch_os_theme()
         if self._auto_setup:
             self.after(200, self._maybe_prompt_product)
+
+    # ------------------------------------------------------------------- theme
+
+    def set_theme(self, choice: str) -> str:
+        """Remember the operator's pick and repaint. Returns what it painted."""
+        self.theme_choice = theme.normalize_choice(choice)
+        self.tracker.set_setting(THEME_SETTING, self.theme_choice)
+        return self._repaint()
+
+    def _repaint(self) -> str:
+        self.theme_painted = apply_palette(self.theme_choice)
+        self._style()
+        self.configure(bg=BG)
+        # ttk styles cover most of the app, but a handful of plain Tk widgets
+        # and one row tag hold their own colours and have to be told again.
+        self.tree.tag_configure("done", background=RECEIVED_BG, foreground=MUTED)
+        for rule in self._rules:
+            rule.configure(bg=LINE)
+        for window in self.winfo_children():
+            if isinstance(window, tk.Toplevel):
+                window.configure(bg=PANEL)
+            for canvas in _descendant_canvases(window):
+                canvas.configure(bg=PANEL)
+        return self.theme_painted
+
+    def _watch_os_theme(self) -> None:
+        """Re-check the desktop theme while "System" is selected.
+
+        Tk has no notification for this, so it is a poll. Four seconds is far
+        below what anyone notices and the check is a single registry read.
+        """
+        if self.theme_choice == theme.SYSTEM:
+            if theme.detect_os_theme() != self.theme_painted:
+                self._repaint()
+        self._theme_job = self.after(4000, self._watch_os_theme)
 
     # ------------------------------------------------------------------ chrome
 
@@ -835,7 +928,7 @@ class SalesApp(tk.Tk):
 
         for name in ("Ticket.TEntry", "Cell.TEntry"):
             style.configure(
-                name, fieldbackground=WHITE, foreground=INK, insertcolor=INK,
+                name, fieldbackground=FIELD, foreground=INK, insertcolor=INK,
                 bordercolor=LINE, lightcolor=LINE, darkcolor=LINE,
                 padding=6, font=self.font_body,
             )
@@ -847,20 +940,39 @@ class SalesApp(tk.Tk):
             )
         # A rejected inline edit carries its own state, on the row.
         style.configure(
-            "Bad.TEntry", fieldbackground=WHITE, foreground=DANGER, insertcolor=DANGER,
+            "Bad.TEntry", fieldbackground=FIELD, foreground=DANGER, insertcolor=DANGER,
             bordercolor=DANGER, lightcolor=DANGER, darkcolor=DANGER,
             padding=6, font=self.font_body,
         )
 
-        style.configure("Ticket.TCombobox", fieldbackground=WHITE, foreground=INK,
+        style.configure("Ticket.TCombobox", fieldbackground=FIELD, foreground=INK,
                         bordercolor=LINE, padding=5, font=self.font_body)
+        # A readonly combobox draws from its state map, not from configure, so
+        # without this it keeps clam's default grey in dark mode.
+        style.map(
+            "Ticket.TCombobox",
+            fieldbackground=[("readonly", FIELD), ("disabled", PANEL)],
+            background=[("readonly", FIELD), ("active", FIELD)],
+            foreground=[("readonly", INK), ("disabled", MUTED)],
+            selectbackground=[("readonly", FIELD)],
+            selectforeground=[("readonly", INK)],
+            arrowcolor=[("disabled", MUTED), ("!disabled", INK)],
+            bordercolor=[("focus", FOCUS)],
+            lightcolor=[("focus", FOCUS), ("!focus", LINE)],
+            darkcolor=[("focus", FOCUS), ("!focus", LINE)],
+        )
+        # The dropdown itself is a plain Tk listbox that ttk cannot reach.
+        self.option_add("*TCombobox*Listbox.background", FIELD)
+        self.option_add("*TCombobox*Listbox.foreground", INK)
+        self.option_add("*TCombobox*Listbox.selectBackground", ACCENT_SOFT)
+        self.option_add("*TCombobox*Listbox.selectForeground", INK)
 
-        style.configure("Primary.TButton", background=ACCENT, foreground=WHITE,
+        style.configure("Primary.TButton", background=ACCENT, foreground=ON_ACCENT,
                         bordercolor=ACCENT, focusthickness=3, focuscolor=ACCENT_SOFT,
                         padding=(14, 8), font=self.font_button)
         style.map("Primary.TButton",
-                  background=[("active", ACCENT_DARK), ("disabled", "#9BB3A8")],
-                  foreground=[("disabled", WHITE)])
+                  background=[("active", ACCENT_DARK), ("disabled", DISABLED)],
+                  foreground=[("disabled", ON_ACCENT)])
 
         style.configure("Ghost.TButton", background=PANEL, foreground=INK,
                         bordercolor=LINE, focusthickness=3, focuscolor=FOCUS,
@@ -870,12 +982,16 @@ class SalesApp(tk.Tk):
         style.configure("Danger.TButton", background=PANEL, foreground=DANGER,
                         bordercolor=LINE, focusthickness=3, focuscolor=DANGER,
                         padding=(11, 7), font=self.font_body)
-        style.map("Danger.TButton", background=[("active", "#F8E8E8")])
+        style.map("Danger.TButton", background=[("active", DANGER_SOFT)])
 
         style.configure("Filter.TRadiobutton", background=BG, foreground=INK,
                         font=self.font_muted, focuscolor=FOCUS)
+        # Same control, but sitting on a dialog panel rather than the page.
+        style.configure("Panel.TRadiobutton", background=PANEL, foreground=INK,
+                        font=self.font_muted, focuscolor=FOCUS)
+        style.map("Panel.TRadiobutton", background=[("active", PANEL)])
 
-        style.configure("Ledger.Treeview", background=WHITE, fieldbackground=WHITE,
+        style.configure("Ledger.Treeview", background=FIELD, fieldbackground=FIELD,
                         foreground=INK, rowheight=34, font=self.font_row,
                         bordercolor=LINE)
         style.configure("Ledger.Treeview.Heading", background=BG, foreground=MUTED,
@@ -921,7 +1037,9 @@ class SalesApp(tk.Tk):
         self.config(menu=menu)
 
     def _rule(self) -> None:
-        tk.Frame(self, bg=LINE, height=1).pack(fill="x")
+        rule = tk.Frame(self, bg=LINE, height=1)
+        rule.pack(fill="x")
+        self._rules.append(rule)
 
     def _build(self) -> None:
         self._build_header()
@@ -1369,12 +1487,17 @@ class SalesApp(tk.Tk):
             self.var_meta.set("Nothing to sell yet")
 
     def destroy(self) -> None:
-        if self._flash_job is not None:
-            try:
-                self.after_cancel(self._flash_job)
-            except tk.TclError:
-                pass
-            self._flash_job = None
+        # Both pending timers have to go here rather than in _on_close: the
+        # window can also be torn down directly, and a callback that fires
+        # after the widgets are gone raises.
+        for attr in ("_flash_job", "_theme_job"):
+            job = getattr(self, attr, None)
+            if job is not None:
+                try:
+                    self.after_cancel(job)
+                except tk.TclError:
+                    pass
+                setattr(self, attr, None)
         super().destroy()
 
     def _on_close(self) -> None:

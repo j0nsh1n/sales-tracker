@@ -37,7 +37,14 @@ them and tells you whether you are balanced, over, or short against *cash
 collected only*. Bill counts are never saved — the point is that the two
 figures are reached independently.
 
+**Appearance** (Settings) switches between Light and Dark. The default,
+System, follows your desktop and changes with it while the app is open —
+switch Windows to dark and the ledger follows without a restart. The choice
+is remembered in `sales.db` and is not cleared by a reset.
+
 **Export CSV** writes every order as a row, followed by a totals block.
+Payment methods read as `Cash` and `Venmo` on screen but stay lowercase in
+the CSV and on the CLI, which is what those commands take as input.
 
 Rows are never removed from the main list. Deleting one order or one product
 happens in Settings (GUI) or the Settings menu / `delete` command (CLI). A
