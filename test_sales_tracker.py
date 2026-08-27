@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import csv
 import io
 import sqlite3
 import tempfile
@@ -11,7 +12,15 @@ from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
+from salestracker.finance import (
+    DENOMINATIONS,
+    count_cash,
+    reconcile,
+)
 from sales_tracker import (
+    CASH,
+    PAYMENT_METHODS,
+    SCHEMA_VERSION,
     InteractiveSession,
     SalesTracker,
     TrackerError,
@@ -19,6 +28,8 @@ from sales_tracker import (
     collect_product_answers,
     format_money,
     main,
+    parse_money,
+    parse_quantity,
 )
 
 
@@ -36,6 +47,13 @@ class SalesTrackerTests(unittest.TestCase):
         payload = dict(name=name, unit="jar", unit_price="12.50")
         payload.update(kwargs)
         return self.tracker.add_product(**payload)
+
+    def _user_version(self, path: Path | None = None) -> int:
+        conn = sqlite3.connect(path or self.db)
+        try:
+            return int(conn.execute("PRAGMA user_version").fetchone()[0])
+        finally:
+            conn.close()
 
     def test_cannot_order_without_product(self) -> None:
         with self.assertRaises(TrackerError):
@@ -89,9 +107,48 @@ class SalesTrackerTests(unittest.TestCase):
         with self.assertRaises(TrackerError):
             self.tracker.set_received(order.id, "-1")
 
-    def test_no_single_order_delete(self) -> None:
-        self.assertFalse(hasattr(self.tracker, "delete_order"))
-        self.assertFalse(hasattr(self.tracker, "delete_sale"))
+    def test_delete_order_removes_only_that_row(self) -> None:
+        self._product()
+        keep = self.tracker.add_order(purchaser="Jim", quantity="10")
+        drop = self.tracker.add_order(purchaser="Ann", quantity="4")
+        removed = self.tracker.delete_order(drop.id)
+        self.assertEqual(removed.purchaser, "Ann")
+        self.assertEqual([o.id for o in self.tracker.list_orders()], [keep.id])
+        self.assertEqual(len(self.tracker.list_products()), 1)
+        with self.assertRaises(TrackerError):
+            self.tracker.get_order(drop.id)
+
+    def test_delete_order_rejects_unknown_id(self) -> None:
+        with self.assertRaises(TrackerError):
+            self.tracker.delete_order(999)
+
+    def test_delete_product_blocked_while_orders_attached(self) -> None:
+        product = self._product()
+        self.tracker.add_order(purchaser="Jim", quantity="10")
+        self.tracker.add_order(purchaser="Ann", quantity="2")
+        with self.assertRaises(TrackerError) as ctx:
+            self.tracker.delete_product(product.id)
+        self.assertIn("2 order(s)", str(ctx.exception))
+        self.assertEqual(len(self.tracker.list_products()), 1)
+        self.assertEqual(len(self.tracker.list_orders()), 2)
+
+    def test_delete_product_allowed_once_orders_are_gone(self) -> None:
+        product = self._product()
+        order = self.tracker.add_order(purchaser="Jim", quantity="10")
+        self.tracker.delete_order(order.id)
+        self.assertEqual(self.tracker.count_orders_for_product(product.id), 0)
+        removed = self.tracker.delete_product(product.id)
+        self.assertEqual(removed.name, "Honey")
+        self.assertEqual(self.tracker.list_products(), [])
+
+    def test_deletes_survive_reopen(self) -> None:
+        self._product()
+        order = self.tracker.add_order(purchaser="Jim", quantity="10")
+        self.tracker.delete_order(order.id)
+        self.tracker.close()
+        with SalesTracker(self.db) as reopened:
+            self.assertEqual(reopened.list_orders(), [])
+        self.tracker = SalesTracker(self.db)
 
     def test_reset_orders_keeps_products(self) -> None:
         self._product()
@@ -178,6 +235,7 @@ class SalesTrackerTests(unittest.TestCase):
             (1, '2026-08-01', 'Ada', 'Notebook', '2', '12.50', '', '2026-08-01T10:00:00')
             """
         )
+        raw.execute("PRAGMA user_version = 0")
         raw.commit()
         raw.close()
         with SalesTracker(self.db) as migrated:
@@ -188,6 +246,246 @@ class SalesTrackerTests(unittest.TestCase):
             self.assertEqual(len(orders), 1)
             self.assertEqual(orders[0].purchaser, "Ada")
             self.assertEqual(orders[0].quantity_received, Decimal("0"))
+            self.assertEqual(self._user_version(), SCHEMA_VERSION)
+
+    def test_rejects_non_finite_and_oversized_numbers(self) -> None:
+        for bad in ("nan", "snan", "Infinity", "-Infinity", "1e999"):
+            with self.subTest(value=bad):
+                with self.assertRaises(TrackerError):
+                    parse_money(bad)
+                with self.assertRaises(TrackerError):
+                    parse_quantity(bad)
+
+    def test_order_rejects_non_finite_quantity(self) -> None:
+        self._product()
+        for bad in ("nan", "Infinity", "1e999"):
+            with self.subTest(value=bad):
+                with self.assertRaises(TrackerError):
+                    self.tracker.add_order(purchaser="Jim", quantity=bad)
+        self.assertEqual(self.tracker.list_orders(), [])
+
+    def test_product_rejects_non_finite_price(self) -> None:
+        for bad in ("nan", "Infinity", "1e999"):
+            with self.subTest(value=bad):
+                with self.assertRaises(TrackerError):
+                    self.tracker.add_product(name=f"P{bad}", unit_price=bad)
+        self.assertEqual(self.tracker.list_products(), [])
+
+    def test_search_treats_like_wildcards_literally(self) -> None:
+        self._product()
+        self.tracker.add_order(purchaser="Jim", quantity="1")
+        self.tracker.add_order(purchaser="100% Ann", quantity="1")
+        self.assertEqual(
+            [o.purchaser for o in self.tracker.list_orders(search="%")],
+            ["100% Ann"],
+        )
+        self.assertEqual(self.tracker.list_orders(search="_"), [])
+        self.assertEqual(
+            [o.purchaser for o in self.tracker.list_orders(search="Ji")], ["Jim"]
+        )
+
+    def test_all_digit_product_name_is_reachable(self) -> None:
+        self._product()
+        self.tracker.add_product(name="2024", unit="case", unit_price="5")
+        self.assertEqual(self.tracker.find_product("2024").name, "2024")
+        self.assertEqual(self.tracker.find_product("1").name, "Honey")
+
+    def test_interrupted_legacy_migration_can_retry(self) -> None:
+        self.tracker.close()
+        raw = sqlite3.connect(self.db)
+        raw.execute("DROP TABLE IF EXISTS orders")
+        raw.execute("DROP TABLE IF EXISTS products")
+        raw.execute(
+            """
+            CREATE TABLE sales (
+                id INTEGER PRIMARY KEY,
+                date TEXT, customer TEXT, item TEXT,
+                quantity TEXT, unit_price TEXT, notes TEXT, created_at TEXT
+            )
+            """
+        )
+        raw.executemany(
+            "INSERT INTO sales VALUES (?,?,?,?,?,?,?,?)",
+            [
+                (1, "2026-08-01", "Ada", "Notebook", "2", "12.50", "", "2026-08-01T10:00:00"),
+                (2, "2026-08-02", "Bo", "Pencil", "3", "1.50", "", "2026-08-02T10:00:00"),
+            ],
+        )
+        raw.execute("PRAGMA user_version = 0")
+        raw.commit()
+        raw.close()
+
+        real = SalesTracker._migration_product_id
+        calls = []
+
+        def flaky(self, name, unit_price):
+            calls.append(name)
+            if len(calls) == 2:
+                raise RuntimeError("interrupted")
+            return real(self, name, unit_price)
+
+        with patch.object(SalesTracker, "_migration_product_id", flaky):
+            with self.assertRaises(RuntimeError):
+                SalesTracker(self.db)
+
+        # Retrying must succeed and must not leave half-migrated duplicates.
+        with SalesTracker(self.db) as retried:
+            self.assertEqual(
+                sorted(p.name for p in retried.list_products()),
+                ["Notebook", "Pencil"],
+            )
+            self.assertEqual(
+                sorted(o.purchaser for o in retried.list_orders()), ["Ada", "Bo"]
+            )
+            self.assertEqual(self._user_version(), SCHEMA_VERSION)
+
+        self.tracker = SalesTracker(self.db)
+
+    def test_fresh_database_is_at_current_schema_version(self) -> None:
+        self.assertEqual(self._user_version(), SCHEMA_VERSION)
+        self.assertGreaterEqual(SCHEMA_VERSION, 2)
+
+    def test_reopen_at_current_version_is_a_noop(self) -> None:
+        self._product()
+        self.tracker.close()
+        with patch.object(
+            SalesTracker, "_migrate_to_v1", side_effect=AssertionError("ran")
+        ):
+            reopened = SalesTracker(self.db)
+        self.addCleanup(reopened.close)
+        self.assertEqual(self._user_version(), SCHEMA_VERSION)
+        self.assertEqual(len(reopened.list_products()), 1)
+
+    def test_refuses_newer_schema_than_code(self) -> None:
+        self.tracker.close()
+        raw = sqlite3.connect(self.db)
+        raw.execute("PRAGMA user_version = 99")
+        raw.commit()
+        raw.close()
+        with self.assertRaises(TrackerError) as ctx:
+            SalesTracker(self.db)
+        self.assertIn("99", str(ctx.exception))
+        self.assertIn(str(SCHEMA_VERSION), str(ctx.exception))
+        self.assertEqual(self._user_version(), 99)
+
+    # ---------------------------------------------------------- payment split
+
+    def test_orders_default_to_cash(self) -> None:
+        self._product()
+        order = self.tracker.add_order(purchaser="Jim", quantity="1")
+        self.assertEqual(order.payment_method, CASH)
+        self.assertTrue(order.is_cash)
+
+    def test_rejects_unknown_payment_method(self) -> None:
+        self._product()
+        with self.assertRaises(TrackerError):
+            self.tracker.add_order(
+                purchaser="Jim", quantity="1", payment_method="bitcoin"
+            )
+        self.assertEqual(self.tracker.list_orders(), [])
+
+    def test_payment_method_can_be_changed(self) -> None:
+        self._product()
+        order = self.tracker.add_order(purchaser="Jim", quantity="1")
+        changed = self.tracker.set_payment_method(order.id, "venmo")
+        self.assertEqual(changed.payment_method, "venmo")
+        self.assertFalse(changed.is_cash)
+
+    def test_financials_split_cash_from_other(self) -> None:
+        self._product()  # Honey, 12.50 / jar
+        cash = self.tracker.add_order(purchaser="Jim", quantity="10")
+        venmo = self.tracker.add_order(
+            purchaser="Ann", quantity="4", payment_method="venmo"
+        )
+        self.tracker.add_order(
+            purchaser="Bo", quantity="2", payment_method="other"
+        )
+        self.tracker.set_received(cash.id, "6")
+        self.tracker.set_received(venmo.id, "4")
+
+        money = self.tracker.financials()
+        self.assertEqual(money.cash_collected, Decimal("75.00"))
+        self.assertEqual(money.cash_uncollected, Decimal("50.00"))
+        self.assertEqual(money.other_collected, Decimal("50.00"))
+        self.assertEqual(money.other_uncollected, Decimal("25.00"))
+        self.assertEqual(money.total_collected, Decimal("125.00"))
+        # The money split must agree with the units-based summary.
+        self.assertEqual(money.book_value, self.tracker.summary().revenue)
+
+    def test_venmo_is_excluded_from_the_drawer(self) -> None:
+        self._product()
+        venmo = self.tracker.add_order(
+            purchaser="Ann", quantity="4", payment_method="venmo"
+        )
+        self.tracker.set_received(venmo.id, "4")
+        money = self.tracker.financials()
+        self.assertEqual(money.cash_collected, Decimal("0.00"))
+        self.assertEqual(money.other_collected, Decimal("50.00"))
+
+    # ------------------------------------------------------------- cash count
+
+    def test_count_cash_totals_denominations(self) -> None:
+        self.assertEqual(count_cash({20: 3, 10: 1, 5: 1}), Decimal("75.00"))
+        self.assertEqual(count_cash({100: 1, 2: 2}), Decimal("104.00"))
+        self.assertEqual(count_cash({}), Decimal("0.00"))
+        self.assertEqual(count_cash({d: 0 for d in DENOMINATIONS}), Decimal("0.00"))
+
+    def test_count_cash_rejects_bad_counts(self) -> None:
+        for bad in ("2.5", "-1", "abc", "nan", "Infinity"):
+            with self.subTest(value=bad):
+                with self.assertRaises(TrackerError):
+                    count_cash({20: bad})
+
+    def test_reconcile_reports_balanced_over_and_short(self) -> None:
+        expected = Decimal("75.00")
+        balanced = reconcile(expected, {20: 3, 10: 1, 5: 1})
+        self.assertTrue(balanced.balanced)
+        self.assertEqual(balanced.state, "balanced")
+        self.assertEqual(balanced.difference, Decimal("0.00"))
+
+        over = reconcile(expected, {20: 4})
+        self.assertEqual(over.state, "over")
+        self.assertEqual(over.difference, Decimal("5.00"))
+        self.assertIn("$5.00", over.headline)
+
+        short = reconcile(expected, {20: 3})
+        self.assertEqual(short.state, "short")
+        self.assertEqual(short.difference, Decimal("-15.00"))
+        self.assertIn("$15.00", short.headline)
+
+    # ----------------------------------------------------------------- export
+
+    def test_export_csv_has_rows_and_totals(self) -> None:
+        self._product()
+        order = self.tracker.add_order(purchaser="Jim", quantity="10")
+        venmo = self.tracker.add_order(
+            purchaser="Ann", quantity="4", payment_method="venmo"
+        )
+        self.tracker.set_received(order.id, "6")
+        self.tracker.set_received(venmo.id, "4")
+
+        target = Path(self.tmp.name) / "out.csv"
+        written = self.tracker.export_csv(target)
+        self.assertTrue(written.exists())
+
+        with written.open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.reader(handle))
+
+        self.assertEqual(rows[0][0], "id")
+        self.assertIn("payment_method", rows[0])
+        self.assertEqual(rows[1][1], "Jim")
+        self.assertEqual(rows[1][rows[0].index("payment_method")], "cash")
+        self.assertEqual(rows[2][rows[0].index("payment_method")], "venmo")
+
+        flat = {r[0]: r[1] for r in rows if len(r) == 2}
+        self.assertIn("TOTALS", [r[0] for r in rows if r])
+        self.assertEqual(flat["Cash collected"], "75.00")
+        self.assertEqual(flat["Other collected"], "50.00")
+        self.assertEqual(flat["Orders"], "2")
+
+    def test_export_csv_refuses_a_missing_folder(self) -> None:
+        with self.assertRaises(TrackerError):
+            self.tracker.export_csv(Path(self.tmp.name) / "nope" / "out.csv")
 
 
 class WizardTests(unittest.TestCase):
@@ -226,6 +524,7 @@ class InteractiveTests(unittest.TestCase):
                 "1",
                 "Jim",
                 "10",
+                "venmo",
                 "2",
                 "1",
                 "5",
@@ -240,6 +539,7 @@ class InteractiveTests(unittest.TestCase):
         self.assertEqual(code, 0)
         orders = self.tracker.list_orders()
         self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0].payment_method, "venmo")
         self.assertEqual(orders[0].purchaser, "Jim")
         self.assertEqual(orders[0].quantity_received, Decimal("5"))
         self.assertIn("5 / 10", stdout.getvalue())
@@ -283,11 +583,48 @@ class CliTests(unittest.TestCase):
             self.assertEqual(tracker.list_orders(), [])
             self.assertEqual(len(tracker.list_products()), 1)
 
+    def test_cli_delete_requires_yes_and_respects_attachment(self) -> None:
+        with SalesTracker(self.db) as tracker:
+            tracker.add_product(name="Honey", unit="jar", unit_price="12.50")
+            order = tracker.add_order(purchaser="Jim", quantity="10")
+        # Without --yes nothing is removed.
+        self.assertEqual(main(["--db", self.db, "delete", "order", str(order.id)]), 1)
+        with SalesTracker(self.db) as tracker:
+            self.assertEqual(len(tracker.list_orders()), 1)
+        # Product still carries an order, so it is refused.
+        self.assertEqual(main(["--db", self.db, "delete", "product", "1", "--yes"]), 1)
+        with SalesTracker(self.db) as tracker:
+            self.assertEqual(len(tracker.list_products()), 1)
+        # Delete the order, then the product goes.
+        self.assertEqual(
+            main(["--db", self.db, "delete", "order", str(order.id), "--yes"]), 0
+        )
+        self.assertEqual(main(["--db", self.db, "delete", "product", "1", "--yes"]), 0)
+        with SalesTracker(self.db) as tracker:
+            self.assertEqual(tracker.list_orders(), [])
+            self.assertEqual(tracker.list_products(), [])
+
     def test_cli_rejects_order_without_product(self) -> None:
         code = main(["--db", self.db, "order", "--buyer", "Jim", "--qty", "2"])
         self.assertEqual(code, 1)
 
 
+def _tk_available() -> bool:
+    """Tkinter needs a display; headless runners without one skip the GUI tests."""
+    try:
+        import tkinter
+
+        root = tkinter.Tk()
+    except Exception:
+        return False
+    root.destroy()
+    return True
+
+
+HAVE_TK = _tk_available()
+
+
+@unittest.skipUnless(HAVE_TK, "no display available for tkinter")
 class GuiSmokeTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -298,6 +635,7 @@ class GuiSmokeTests(unittest.TestCase):
         self.app.update_idletasks()
 
     def tearDown(self) -> None:
+        self.app.tracker.close()
         self.app.destroy()
         self.tmp.cleanup()
 
@@ -352,6 +690,51 @@ class GuiSmokeTests(unittest.TestCase):
         self.app.update_idletasks()
         self.assertEqual(self.app.tree.get_children(), ())
         self.assertEqual(len(self.app.tracker.list_products()), 1)
+
+    def test_settings_deletes_are_gated_and_scoped(self) -> None:
+        from gui import SettingsDialog
+
+        tracker = self.app.tracker
+        tracker.add_product(name="Honey", unit="jar", unit_price="12.50")
+        tracker.add_product(name="Jam", unit="jar", unit_price="4.00")
+        tracker.add_order(purchaser="Jim", quantity="10", product="Honey")
+        drop = tracker.add_order(purchaser="Ann", quantity="4", product="Honey")
+        self.app.refresh()
+
+        dialog = SettingsDialog(self.app, tracker, on_change=self.app.refresh)
+        dialog.update_idletasks()
+        self.assertEqual(
+            {dialog.products_tree.item(i, "values")[0] for i in dialog.products_tree.get_children()},
+            {"Honey", "Jam"},
+        )
+        try:
+            with patch("gui.messagebox.showinfo"), patch("gui.messagebox.showerror"):
+                # Selected, but the RESET box is empty: nothing is removed.
+                dialog.orders_tree.selection_set(str(drop.id))
+                dialog._delete_order()
+                self.assertEqual(len(tracker.list_orders()), 2)
+
+                dialog.var_confirm.set("RESET")
+                dialog._delete_order()
+                self.assertEqual(
+                    [o.purchaser for o in tracker.list_orders()], ["Jim"]
+                )
+
+                # Honey still carries Jim's order, so it is refused.
+                honey = tracker.find_product("Honey")
+                dialog.products_tree.selection_set(str(honey.id))
+                dialog._delete_product()
+                self.assertEqual(len(tracker.list_products()), 2)
+
+                # Jam has no orders and goes.
+                jam = tracker.find_product("Jam")
+                dialog.products_tree.selection_set(str(jam.id))
+                dialog._delete_product()
+                self.assertEqual(
+                    [p.name for p in tracker.list_products()], ["Honey"]
+                )
+        finally:
+            dialog.destroy()
 
     def test_no_delete_control_on_main_window(self) -> None:
         import tkinter as tk

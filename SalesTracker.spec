@@ -1,10 +1,19 @@
-# PyInstaller spec for the Windows GUI build.
+# PyInstaller spec for the GUI build (Windows .exe or Linux ELF).
 # Runtime stays stdlib-only. This file is used only when packaging.
 
 from PyInstaller.utils.hooks import collect_all
 
 datas, binaries, hiddenimports = collect_all("tkinter")
-hiddenimports += ["sales_tracker"]
+hiddenimports += [
+    "sales_tracker",
+    "salestracker",
+    "salestracker.models",
+    "salestracker.finance",
+    "salestracker.store",
+    "salestracker.cli",
+    "salestracker.ui",
+    "salestracker.ui.gui",
+]
 
 a = Analysis(
     ["gui.py"],
