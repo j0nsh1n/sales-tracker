@@ -17,20 +17,23 @@ python3 sales_tracker.py product --name Honey --unit jar --price 12.50
 python3 sales_tracker.py order --buyer Jim --qty 10
 python3 sales_tracker.py receive 1 --got 5
 python3 sales_tracker.py list
+python3 sales_tracker.py delete order 1 --yes
+python3 sales_tracker.py delete product 1 --yes
 python3 sales_tracker.py reset --orders --yes
 ```
 
-Packaged GUI (no Python install needed):
+Rows are never removed from the main list. Deleting one order or one product
+happens in Settings (GUI) or the Settings menu / `delete` command (CLI). A
+product that still has orders on the list cannot be deleted until those
+orders are.
 
-```bash
-# Linux (this machine)
-./release/SalesTracker-linux-x86_64
+Packaged GUI (no Python install needed): download the Windows `.exe` or
+Linux ELF from the
+[Releases](https://github.com/j0nsh1n/sales-tracker/releases) page.
+`sales.db` is created next to the binary. A tag matching `v*` (for example
+`v0.1.0`) builds both targets and attaches them to that release.
 
-# Windows
-release\SalesTracker.exe
-```
-
-`sales.db` is created next to the binary. Rebuild:
+Rebuild:
 
 ```bash
 python3 -m pip install -r requirements-build.txt
