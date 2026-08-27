@@ -101,23 +101,26 @@ Product 1---* Order
 
 ## Session Handoff
 - **Date:** 2026-08-27
-- **Branch:** fix/gui-scrolling-labels-centering (stacked on
-  fix/windows-frozen-launch, which is pushed and awaiting its PR)
+- **Branch:** fix/gui-scrolling-labels-centering (main merged in)
 - **Done:** Money page could not reach its own content and Settings
   scrolled two things at once; dialogs opened at +0+0 instead of over the
   main window; payment methods were shown lowercase. All three fixed and
   pinned by tests that fail on the old code. Added dark mode:
   `salestracker/ui/theme.py`, an Appearance control in Settings, schema
   v3 `settings` table, and a 4s poll so System follows the desktop live.
-  spec.md updated with human approval (Appearance, lowercase-storage
-  rule, settings table, schema 3, new components, acceptance criteria).
-  Cut as 0.1.2 in CHANGELOG.
+  spec.md updated with human approval. Cut as 0.1.2 in CHANGELOG.
 - **Verified:** 78 tests green on Windows. Dark mode checked by screenshot
   of both the source run and the packaged exe; the readonly comboboxes
   needed a state map before they stopped rendering light grey. Rebuilt
   exe passes `tools/smoke_test.py`.
-- **Open:** Linux and Wine smoke paths still unrun. Coins not handled.
-  Extra payment methods (zelle/card) need a spec line. History still
-  holds 30 MB of old binaries.
-- **Next:** Merge the two PRs in order, tag v0.1.1 for the launch fix,
-  then v0.1.2 for this work.
+- **State of the remote:** `v0.1.1` is tagged at 2625283 and is the first
+  release whose exe starts. `v0.1.0` points at 38ef535, predating the
+  launch fix, so the exe published there does not run — its release notes
+  should point users at 0.1.1. The smoke test's two Linux bugs (relative
+  path resolved twice under the child's cwd; wineserver killed on every
+  Linux run, not just wine ones) were caught by the linux-elf job and are
+  fixed on main.
+- **Open:** the Wine path of the smoke test is still unrun. Coins not
+  handled. Extra payment methods (zelle/card) need a spec line. History
+  still holds 30 MB of old binaries.
+- **Next:** merge this branch, then tag v0.1.2.

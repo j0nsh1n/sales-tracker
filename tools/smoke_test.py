@@ -232,7 +232,7 @@ def launch(binary: Path, db_path: Path, use_wine: bool) -> subprocess.Popen:
     return subprocess.Popen(command, **kwargs)
 
 
-def terminate(process: subprocess.Popen, use_x11: bool) -> None:
+def terminate(process: subprocess.Popen, use_wine: bool) -> None:
     try:
         if os.name == "nt":
             subprocess.run(
@@ -247,9 +247,11 @@ def terminate(process: subprocess.Popen, use_x11: bool) -> None:
                 process.kill()
     except OSError:
         pass
-    if use_x11:
-        # Wine leaves its server running between invocations; a stray one would
-        # let the next run see this run's window.
+    # Wine leaves its server running between invocations; a stray one would
+    # let the next run see this run's window. Only relevant when we actually
+    # launched through wine, and only if wine is installed -- a native Linux
+    # run on a machine without wine must not fail here after passing.
+    if use_wine and shutil.which("wineserver"):
         subprocess.run(["wineserver", "-k"], capture_output=True)
 
 
@@ -281,7 +283,7 @@ def run(binary: Path, want_title: str, timeout: float, use_wine: bool) -> int:
                     return 1
                 time.sleep(0.5)
         finally:
-            terminate(process, use_x11)
+            terminate(process, use_wine)
 
     print(
         "FAIL: no window titled "
@@ -324,6 +326,12 @@ def main(argv: list[str] | None = None) -> int:
         binary = args.binary or default_binary(repo_root)
         if not binary.exists():
             raise SmokeError("no such binary: " + str(binary))
+        # launch() runs the child with cwd set to the binary's own directory.
+        # On POSIX the child chdirs there before exec, so a relative path like
+        # "dist/SalesTracker" would be looked up as "dist/dist/SalesTracker".
+        # Windows resolves the image against the parent's cwd, which is why
+        # only the Linux job failed. Anchor it here so both behave the same.
+        binary = binary.resolve()
         if args.wine and os.name == "nt":
             raise SmokeError("--wine is for running a Windows build from Linux")
         print("platform: " + platform.platform())

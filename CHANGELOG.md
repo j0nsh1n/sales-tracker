@@ -120,3 +120,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   zipfs), and the CLI module read `sys.stdout` at import time, which is
   `None` in a windowed build started without a console. Either fault
   alone was enough to kill the app before it drew anything.
+- The Linux CI build never published its binary. `tools/smoke_test.py` was
+  given a relative path by CI and starts the app with the working directory
+  set to the binary's own folder, so on Linux the path resolved twice and
+  the harness failed before it could launch anything. The Windows job was
+  unaffected because Windows resolves the program path differently. With
+  the Linux job fixed, a tagged release now carries both a `.exe` and a
+  Linux binary. The same job then failed a second time during cleanup: it
+  tried to shut down a Wine server on every Linux run, including native
+  ones, and the runner has no Wine installed. Cleanup now only does that
+  when the run actually went through Wine.
