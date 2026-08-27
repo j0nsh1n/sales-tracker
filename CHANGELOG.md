@@ -80,3 +80,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   by name.
 - A tracker whose startup failed kept the database write-locked for the rest
   of the process.
+
+## [0.1.1] - 2026-08-26
+
+### Added
+- `tools/smoke_test.py`: launches a frozen build the way a double-click
+  does and requires a real visible window, so a packaged build that starts
+  but shows nothing is caught. Runs on Windows and Linux, and can drive the
+  Windows `.exe` through Wine with `--wine`. CI runs it on both targets
+  after the build step.
+
+### Fixed
+- The packaged Windows `.exe` did not launch. Double-clicking it showed an
+  "Unhandled exception in script" dialog and no window, from two separate
+  faults: PyInstaller 6.21.0 bundled no Tcl/Tk data for Python 3.14's
+  Tcl/Tk 9 (whose library ships inside a zip, mounted through Tcl's own
+  zipfs), and the CLI module read `sys.stdout` at import time, which is
+  `None` in a windowed build started without a console. Either fault
+  alone was enough to kill the app before it drew anything.
