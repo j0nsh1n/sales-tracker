@@ -3,24 +3,29 @@
 
 from __future__ import annotations
 
+import csv
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
 from salestracker.models import (
+    CASH,
     DEFAULT_DB,
     MONEY_QUANT,
+    Financials,
     Order,
     Product,
     Summary,
     TrackerError,
     _now,
+    format_qty,
     parse_money,
+    parse_payment_method,
     parse_qty,
     parse_quantity,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class SalesTracker:
@@ -62,6 +67,7 @@ class SalesTracker:
             )
         migrations = (
             (1, self._migrate_to_v1),
+            (2, self._migrate_to_v2),
         )
         for target, migrator in migrations:
             if version >= target:
@@ -102,6 +108,18 @@ class SalesTracker:
             "CREATE INDEX IF NOT EXISTS idx_orders_purchaser ON orders(purchaser)"
         )
         self._migrate_legacy_sales()
+
+    def _migrate_to_v2(self) -> None:
+        """Record how each order is paid; existing rows are assumed cash."""
+        columns = {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(orders)")
+        }
+        if "payment_method" not in columns:
+            self._conn.execute(
+                "ALTER TABLE orders ADD COLUMN payment_method TEXT NOT NULL "
+                f"DEFAULT '{CASH}'"
+            )
 
     def _migrate_legacy_sales(self) -> None:
         tables = {
@@ -245,6 +263,7 @@ class SalesTracker:
         purchaser: str,
         quantity: object,
         product: str | int | None = None,
+        payment_method: str = CASH,
     ) -> Order:
         products = self.list_products()
         if not products:
@@ -261,16 +280,17 @@ class SalesTracker:
         if not buyer:
             raise TrackerError("purchaser name is required.")
         ordered = parse_quantity(quantity)
+        method = parse_payment_method(payment_method)
         stamp = _now()
         cursor = self._conn.execute(
             """
             INSERT INTO orders (
                 product_id, purchaser, quantity_ordered, quantity_received,
-                created_at, updated_at
+                created_at, updated_at, payment_method
             )
-            VALUES (?, ?, ?, '0', ?, ?)
+            VALUES (?, ?, ?, '0', ?, ?, ?)
             """,
-            (chosen.id, buyer, str(ordered), stamp, stamp),
+            (chosen.id, buyer, str(ordered), stamp, stamp, method),
         )
         self._conn.commit()
         return self.get_order(cursor.lastrowid)
@@ -361,6 +381,89 @@ class SalesTracker:
             revenue=revenue.quantize(MONEY_QUANT, rounding=ROUND_HALF_UP),
         )
 
+    def set_payment_method(self, order_id: int, payment_method: str) -> Order:
+        method = parse_payment_method(payment_method)
+        self.get_order(order_id)
+        self._conn.execute(
+            "UPDATE orders SET payment_method = ?, updated_at = ? WHERE id = ?",
+            (method, _now(), order_id),
+        )
+        self._conn.commit()
+        return self.get_order(order_id)
+
+    def financials(self) -> Financials:
+        """Expected money, split by whether it should be in the drawer."""
+        cash_in = cash_out = other_in = other_out = Decimal("0.00")
+        for order in self.list_orders():
+            if order.is_cash:
+                cash_in += order.collected
+                cash_out += order.uncollected
+            else:
+                other_in += order.collected
+                other_out += order.uncollected
+        def quant(value: Decimal) -> Decimal:
+            return value.quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+
+        return Financials(
+            cash_collected=quant(cash_in),
+            cash_uncollected=quant(cash_out),
+            other_collected=quant(other_in),
+            other_uncollected=quant(other_out),
+        )
+
+    def export_rows(self) -> tuple[list[str], list[list[str]], list[list[str]]]:
+        """Header, one row per order, and a totals block, ready for CSV."""
+        header = [
+            "id", "purchaser", "product", "unit", "unit_price",
+            "quantity_ordered", "quantity_received", "quantity_remaining",
+            "payment_method", "status", "value_collected", "value_outstanding",
+            "order_value", "created_at", "updated_at",
+        ]
+        rows = [
+            [
+                str(o.id), o.purchaser, o.product_name, o.product_unit,
+                f"{o.unit_price:.2f}",
+                format_qty(o.quantity_ordered), format_qty(o.quantity_received),
+                format_qty(o.remaining), o.payment_method, o.status,
+                f"{o.collected:.2f}", f"{o.uncollected:.2f}", f"{o.total:.2f}",
+                o.created_at, o.updated_at,
+            ]
+            for o in self.list_orders()
+        ]
+        summary = self.summary()
+        money = self.financials()
+        totals = [
+            ["Orders", str(summary.order_count)],
+            ["Outstanding orders", str(summary.outstanding_count)],
+            ["Received orders", str(summary.received_count)],
+            ["Units ordered", format_qty(summary.units_ordered)],
+            ["Units handed over", format_qty(summary.units_received)],
+            ["Units still due", format_qty(summary.units_remaining)],
+            ["Cash collected", f"{money.cash_collected:.2f}"],
+            ["Cash still to collect", f"{money.cash_uncollected:.2f}"],
+            ["Other collected", f"{money.other_collected:.2f}"],
+            ["Other still to collect", f"{money.other_uncollected:.2f}"],
+            ["Total collected", f"{money.total_collected:.2f}"],
+            ["Total still to collect", f"{money.total_uncollected:.2f}"],
+            ["Full order value", f"{money.book_value:.2f}"],
+        ]
+        return header, rows, totals
+
+    def export_csv(self, path: str | Path) -> Path:
+        """Write every order plus a totals block to one CSV file."""
+        target = Path(path)
+        if target.parent and not target.parent.exists():
+            raise TrackerError(f"No such folder: {target.parent}")
+        header, rows, totals = self.export_rows()
+        with target.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(header)
+            writer.writerows(rows)
+            writer.writerow([])
+            writer.writerow(["TOTALS"])
+            writer.writerows(totals)
+        return target
+
     def delete_order(self, order_id: int) -> Order:
         """Remove one order. Settings-only; the main list has no delete."""
         order = self.get_order(order_id)
@@ -433,6 +536,7 @@ class SalesTracker:
             SELECT
                 o.id, o.product_id, o.purchaser, o.quantity_ordered,
                 o.quantity_received, o.created_at, o.updated_at,
+                o.payment_method,
                 p.name AS product_name, p.unit AS product_unit,
                 p.unit_price AS unit_price
             FROM orders o
@@ -465,5 +569,6 @@ class SalesTracker:
             quantity_received=Decimal(row["quantity_received"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            payment_method=row["payment_method"],
         )
 

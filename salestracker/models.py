@@ -19,6 +19,10 @@ def application_dir() -> Path:
 
 DEFAULT_DB = application_dir() / "sales.db"
 MONEY_QUANT = Decimal("0.01")
+# Only "cash" lands in the drawer; everything else settles elsewhere and must
+# be excluded from a cash reconciliation.
+PAYMENT_METHODS = ("cash", "venmo", "other")
+CASH = "cash"
 QTY_QUANT = Decimal("0.001")
 UNITS = ("each", "jar", "box", "dozen", "lb", "bag", "case", "pack", "bottle")
 
@@ -73,6 +77,16 @@ def parse_quantity(value: object) -> Decimal:
     return parse_qty(value, field="quantity", minimum=Decimal("0.001"))
 
 
+def parse_payment_method(value: object) -> str:
+    method = str(value or CASH).strip().lower()
+    if not method:
+        return CASH
+    if method not in PAYMENT_METHODS:
+        allowed = ", ".join(PAYMENT_METHODS)
+        raise TrackerError(f"payment method must be one of: {allowed}.")
+    return method
+
+
 def format_money(amount: Decimal) -> str:
     return f"${amount:,.2f}"
 
@@ -111,6 +125,25 @@ class Order:
     quantity_received: Decimal
     created_at: str
     updated_at: str
+    payment_method: str = CASH
+
+    @property
+    def is_cash(self) -> bool:
+        return self.payment_method == CASH
+
+    @property
+    def collected(self) -> Decimal:
+        """Money already taken in: what has actually been handed over."""
+        return (self.quantity_received * self.unit_price).quantize(
+            MONEY_QUANT, rounding=ROUND_HALF_UP
+        )
+
+    @property
+    def uncollected(self) -> Decimal:
+        """Money still to come in for the part not yet handed over."""
+        return (self.remaining * self.unit_price).quantize(
+            MONEY_QUANT, rounding=ROUND_HALF_UP
+        )
 
     @property
     def remaining(self) -> Decimal:
@@ -130,6 +163,28 @@ class Order:
         return (self.quantity_ordered * self.unit_price).quantize(
             MONEY_QUANT, rounding=ROUND_HALF_UP
         )
+
+
+@dataclass(frozen=True)
+class Financials:
+    """Expected money, split by whether it lands in the cash drawer."""
+
+    cash_collected: Decimal
+    cash_uncollected: Decimal
+    other_collected: Decimal
+    other_uncollected: Decimal
+
+    @property
+    def total_collected(self) -> Decimal:
+        return self.cash_collected + self.other_collected
+
+    @property
+    def total_uncollected(self) -> Decimal:
+        return self.cash_uncollected + self.other_uncollected
+
+    @property
+    def book_value(self) -> Decimal:
+        return self.total_collected + self.total_uncollected
 
 
 @dataclass(frozen=True)

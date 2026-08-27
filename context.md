@@ -5,7 +5,7 @@
 - App is a **SQLite ledger** with two entry points: interactive CLI
   (`sales_tracker.py`) and Tkinter UI (`gui.py`). Implementation lives in
   the `salestracker` package; root files are shims.
-- Tests: `python3 -m unittest test_sales_tracker.py` — 40 passed.
+- Tests: `python3 -m unittest test_sales_tracker.py` — 50 passed.
   Lint / types: **not configured**.
 - Frozen GUI: built by CI; `v*` tags attach Windows exe and Linux ELF to
   a GitHub Release. Binaries are not tracked in git.
@@ -48,7 +48,8 @@ Product 1---* Order
 ## Non-Obvious Decisions
 - Money is `decimal.Decimal` stored as TEXT, not integer cents.
 - Quantity allows fractions (0.001) so lb / kg still work.
-- Schema version is `PRAGMA user_version` (current 1). Legacy `sales`
+- Schema version is `PRAGMA user_version` (current 2; v2 added
+  `orders.payment_method`, defaulting existing rows to cash). Legacy `sales`
   import is migration 0 → 1 (received starts at 0). Newer-than-code
   databases raise TrackerError.
 - GUI auto-opens the product wizard when the catalog is empty.
@@ -70,9 +71,12 @@ Product 1---* Order
 ## Session Handoff
 - **Date:** 2026-08-26
 - **Branch:** refactor/package-restructure
-- **Done:** Untracked binaries; schema v1; package split. 40 tests passing.
-  Frozen Linux GUI still starts. Nothing pushed.
-- **Open:** spec.md still names `release/` binaries as shipped paths and
-  lists `sales_tracker.py` as the implementation. Git history still holds
-  the 30 MB blobs until an explicit rewrite + force-push.
-- **Next:** Human applies spec wording and decides on history rewrite.
+- **Done:** Claude's uncommitted Money / payment / CSV work committed
+  locally. Linux onefile rebuilt at `release/SalesTracker-linux-x86_64`.
+  Nothing pushed.
+- **Verified:** `python3 -m unittest test_sales_tracker.py` — 50 passed.
+- **Open:** `docs/GROK-TASKS.md` is a spent handoff. Coins not handled.
+  Extra payment methods (zelle/card) need a spec line. History still holds
+  30 MB of old binaries.
+- **Next:** Human reviews Money page and export; say if this should be
+  pushed or opened as a PR.

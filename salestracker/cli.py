@@ -8,6 +8,9 @@ import sys
 from typing import Callable, TextIO
 
 from salestracker.models import (
+    CASH,
+    PAYMENT_METHODS,
+    Financials,
     DEFAULT_DB,
     UNITS,
     Order,
@@ -17,6 +20,7 @@ from salestracker.models import (
     format_money,
     format_qty,
 )
+from salestracker.finance import DENOMINATIONS, count_cash, reconcile
 from salestracker.store import SalesTracker
 
 PromptFn = Callable[[str], str]
@@ -99,6 +103,30 @@ def _print_summary(summary: Summary, write: WriteFn = sys.stdout.write) -> None:
     )
 
 
+def _print_financials(money: Financials, write: WriteFn = sys.stdout.write) -> None:
+    rows = (
+        ("Cash collected", money.cash_collected),
+        ("Cash still to collect", money.cash_uncollected),
+        ("Other collected (venmo etc.)", money.other_collected),
+        ("Other still to collect", money.other_uncollected),
+        ("Total collected", money.total_collected),
+        ("Total still to collect", money.total_uncollected),
+        ("Full order value", money.book_value),
+    )
+    width = max(len(label) for label, _ in rows)
+    for label, amount in rows:
+        write(f"  {label:<{width}}  {format_money(amount):>12}\n")
+
+
+def collect_cash_count(ask: PromptFn, write: WriteFn) -> dict[int, str]:
+    """Ask for the number of bills of each denomination, largest first."""
+    write("Count your bills. Press Enter to skip a denomination.\n")
+    counts: dict[int, str] = {}
+    for denomination in DENOMINATIONS:
+        counts[denomination] = ask(f"  How many ${denomination} bills? ")
+    return counts
+
+
 class InteractiveSession:
     """Menu-driven CLI used when the script is run with no subcommand."""
 
@@ -152,7 +180,9 @@ class InteractiveSession:
         self.write("  2) Update how many someone has received\n")
         self.write("  3) Show the list\n")
         self.write("  4) Establish another product\n")
-        self.write("  5) Settings (reset)\n")
+        self.write("  5) Money (expected totals and a cash count)\n")
+        self.write("  6) Export the list to CSV\n")
+        self.write("  7) Settings (reset)\n")
         self.write("  0) Quit\n")
         return self.ask("> ").strip().casefold()
 
@@ -166,10 +196,14 @@ class InteractiveSession:
             _print_summary(self.tracker.summary(), self.write)
         elif choice in {"4", "product"}:
             self._setup_product()
-        elif choice in {"5", "settings"}:
+        elif choice in {"5", "money", "cash"}:
+            self._money()
+        elif choice in {"6", "export", "csv"}:
+            self._export()
+        elif choice in {"7", "settings"}:
             self._settings()
         else:
-            self.write("Choose 1, 2, 3, 4, 5, or 0.\n")
+            self.write("Choose a number from the menu, or 0 to quit.\n")
 
     def _setup_product(self) -> bool:
         answers = collect_product_answers(self.ask, self.write)
@@ -201,15 +235,22 @@ class InteractiveSession:
         quantity = self.ask(
             f"How many {product.unit} did {purchaser.strip() or 'they'} buy?\n> "
         )
+        self.write(
+            "How are they paying? " + " / ".join(PAYMENT_METHODS) +
+            f"  (Enter for {CASH})\n"
+        )
+        method = self.ask("> ").strip() or CASH
         order = self.tracker.add_order(
             purchaser=purchaser,
             quantity=quantity,
             product=product.id,
+            payment_method=method,
         )
         self.write(
             f"Logged #{order.id}: {order.purchaser} ordered "
             f"{format_qty(order.quantity_ordered)} {order.product_unit} of "
-            f"{order.product_name} (0 received so far).\n"
+            f"{order.product_name} by {order.payment_method} "
+            "(0 received so far).\n"
         )
 
     def _update_received(self) -> None:
@@ -279,6 +320,34 @@ class InteractiveSession:
         self.tracker.delete_product(product.id)
         self.write(f"Deleted {product.name}.\n")
 
+    def _money(self) -> None:
+        money = self.tracker.financials()
+        self.write("\nExpected money\n")
+        _print_financials(money, self.write)
+        answer = self.ask(
+            "\nCount the cash drawer against this? (yes / no)\n> "
+        ).strip().casefold()
+        if answer not in {"y", "yes"}:
+            return
+        counts = collect_cash_count(self.ask, self.write)
+        result = reconcile(money.cash_collected, counts)
+        self.write(f"\n  Counted        {format_money(result.counted):>12}\n")
+        self.write(f"  Expected cash  {format_money(result.expected):>12}\n")
+        self.write(f"\n  {result.headline}\n")
+        if not result.balanced:
+            self.write(
+                "  Cash orders only — venmo and other payments are excluded.\n"
+            )
+
+    def _export(self) -> None:
+        target = self.ask("Write the CSV where? (path)\n> ").strip()
+        if not target:
+            self.write("Export cancelled.\n")
+            return
+        written = self.tracker.export_csv(target)
+        orders = len(self.tracker.list_orders())
+        self.write(f"Wrote {orders} order(s) plus totals to {written}.\n")
+
     def _settings(self) -> None:
         self.write("\nSettings\n")
         self.write("  Orders never disappear unless you remove them here.\n")
@@ -335,6 +404,10 @@ def build_parser() -> argparse.ArgumentParser:
     order.add_argument("--buyer", required=True, help="Purchaser name")
     order.add_argument("--qty", required=True, help="Quantity ordered")
     order.add_argument("--product", help="Product name or id (needed if more than one)")
+    order.add_argument(
+        "--method", default=CASH, choices=PAYMENT_METHODS,
+        help="How the order is paid (default: cash). Only cash counts toward the drawer.",
+    )
 
     listed = sub.add_parser("list", help="Show the order list")
     listed.add_argument("--search", help="Match purchaser or product")
@@ -362,6 +435,26 @@ def build_parser() -> argparse.ArgumentParser:
     delete.add_argument("kind", choices=("order", "product"))
     delete.add_argument("id", type=int)
     delete.add_argument("--yes", action="store_true", help="Confirm the delete")
+
+    pay = sub.add_parser("pay", help="Change how an existing order is paid")
+    pay.add_argument("id", type=int)
+    pay.add_argument("method", choices=PAYMENT_METHODS)
+
+    money = sub.add_parser(
+        "money", help="Expected totals, and optionally reconcile a cash count"
+    )
+    money.add_argument(
+        "--count", action="store_true",
+        help="Ask for a bill count and compare it against expected cash",
+    )
+    for denomination in DENOMINATIONS:
+        money.add_argument(
+            f"--n{denomination}", default="0", metavar="N",
+            help=f"Number of ${denomination} bills",
+        )
+
+    export = sub.add_parser("export", help="Write every order plus totals to CSV")
+    export.add_argument("--out", required=True, help="Path of the CSV to write")
 
     sub.add_parser("interactive", help="Menu-driven session")
     return parser
@@ -407,11 +500,12 @@ def main(argv: list[str] | None = None) -> int:
                     purchaser=args.buyer,
                     quantity=args.qty,
                     product=args.product,
+                    payment_method=args.method,
                 )
                 print(
                     f"Logged #{order.id}: {order.purchaser} ordered "
                     f"{format_qty(order.quantity_ordered)} {order.product_unit} of "
-                    f"{order.product_name}"
+                    f"{order.product_name} ({order.payment_method})"
                 )
             elif args.command == "list":
                 _print_orders(
@@ -431,6 +525,35 @@ def main(argv: list[str] | None = None) -> int:
                 )
             elif args.command == "summary":
                 _print_summary(tracker.summary())
+            elif args.command == "pay":
+                order = tracker.set_payment_method(args.id, args.method)
+                print(
+                    f"Order #{order.id} ({order.purchaser}) is now "
+                    f"paid by {order.payment_method}."
+                )
+            elif args.command == "money":
+                money = tracker.financials()
+                print("Expected money")
+                _print_financials(money)
+                if args.count:
+                    counts = {
+                        d: getattr(args, f"n{d}") for d in DENOMINATIONS
+                    }
+                    if not any(str(v).strip() not in ("", "0") for v in counts.values()):
+                        counts = collect_cash_count(lambda q: input(q), sys.stdout.write)
+                    result = reconcile(money.cash_collected, counts)
+                    print()
+                    print(f"  Counted        {format_money(result.counted):>12}")
+                    print(f"  Expected cash  {format_money(result.expected):>12}")
+                    print()
+                    print(f"  {result.headline}")
+                    print("  Cash orders only — venmo and other are excluded.")
+            elif args.command == "export":
+                written = tracker.export_csv(args.out)
+                print(
+                    f"Wrote {len(tracker.list_orders())} order(s) plus totals "
+                    f"to {written}."
+                )
             elif args.command == "delete":
                 if not args.yes:
                     raise TrackerError("Delete refused: pass --yes to confirm.")

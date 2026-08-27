@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import csv
 import io
 import sqlite3
 import tempfile
@@ -11,7 +12,14 @@ from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
+from salestracker.finance import (
+    DENOMINATIONS,
+    count_cash,
+    reconcile,
+)
 from sales_tracker import (
+    CASH,
+    PAYMENT_METHODS,
     SCHEMA_VERSION,
     InteractiveSession,
     SalesTracker,
@@ -333,9 +341,9 @@ class SalesTrackerTests(unittest.TestCase):
 
         self.tracker = SalesTracker(self.db)
 
-    def test_fresh_database_is_schema_version_1(self) -> None:
+    def test_fresh_database_is_at_current_schema_version(self) -> None:
         self.assertEqual(self._user_version(), SCHEMA_VERSION)
-        self.assertEqual(self._user_version(), 1)
+        self.assertGreaterEqual(SCHEMA_VERSION, 2)
 
     def test_reopen_at_current_version_is_a_noop(self) -> None:
         self._product()
@@ -359,6 +367,125 @@ class SalesTrackerTests(unittest.TestCase):
         self.assertIn("99", str(ctx.exception))
         self.assertIn(str(SCHEMA_VERSION), str(ctx.exception))
         self.assertEqual(self._user_version(), 99)
+
+    # ---------------------------------------------------------- payment split
+
+    def test_orders_default_to_cash(self) -> None:
+        self._product()
+        order = self.tracker.add_order(purchaser="Jim", quantity="1")
+        self.assertEqual(order.payment_method, CASH)
+        self.assertTrue(order.is_cash)
+
+    def test_rejects_unknown_payment_method(self) -> None:
+        self._product()
+        with self.assertRaises(TrackerError):
+            self.tracker.add_order(
+                purchaser="Jim", quantity="1", payment_method="bitcoin"
+            )
+        self.assertEqual(self.tracker.list_orders(), [])
+
+    def test_payment_method_can_be_changed(self) -> None:
+        self._product()
+        order = self.tracker.add_order(purchaser="Jim", quantity="1")
+        changed = self.tracker.set_payment_method(order.id, "venmo")
+        self.assertEqual(changed.payment_method, "venmo")
+        self.assertFalse(changed.is_cash)
+
+    def test_financials_split_cash_from_other(self) -> None:
+        self._product()  # Honey, 12.50 / jar
+        cash = self.tracker.add_order(purchaser="Jim", quantity="10")
+        venmo = self.tracker.add_order(
+            purchaser="Ann", quantity="4", payment_method="venmo"
+        )
+        self.tracker.add_order(
+            purchaser="Bo", quantity="2", payment_method="other"
+        )
+        self.tracker.set_received(cash.id, "6")
+        self.tracker.set_received(venmo.id, "4")
+
+        money = self.tracker.financials()
+        self.assertEqual(money.cash_collected, Decimal("75.00"))
+        self.assertEqual(money.cash_uncollected, Decimal("50.00"))
+        self.assertEqual(money.other_collected, Decimal("50.00"))
+        self.assertEqual(money.other_uncollected, Decimal("25.00"))
+        self.assertEqual(money.total_collected, Decimal("125.00"))
+        # The money split must agree with the units-based summary.
+        self.assertEqual(money.book_value, self.tracker.summary().revenue)
+
+    def test_venmo_is_excluded_from_the_drawer(self) -> None:
+        self._product()
+        venmo = self.tracker.add_order(
+            purchaser="Ann", quantity="4", payment_method="venmo"
+        )
+        self.tracker.set_received(venmo.id, "4")
+        money = self.tracker.financials()
+        self.assertEqual(money.cash_collected, Decimal("0.00"))
+        self.assertEqual(money.other_collected, Decimal("50.00"))
+
+    # ------------------------------------------------------------- cash count
+
+    def test_count_cash_totals_denominations(self) -> None:
+        self.assertEqual(count_cash({20: 3, 10: 1, 5: 1}), Decimal("75.00"))
+        self.assertEqual(count_cash({100: 1, 2: 2}), Decimal("104.00"))
+        self.assertEqual(count_cash({}), Decimal("0.00"))
+        self.assertEqual(count_cash({d: 0 for d in DENOMINATIONS}), Decimal("0.00"))
+
+    def test_count_cash_rejects_bad_counts(self) -> None:
+        for bad in ("2.5", "-1", "abc", "nan", "Infinity"):
+            with self.subTest(value=bad):
+                with self.assertRaises(TrackerError):
+                    count_cash({20: bad})
+
+    def test_reconcile_reports_balanced_over_and_short(self) -> None:
+        expected = Decimal("75.00")
+        balanced = reconcile(expected, {20: 3, 10: 1, 5: 1})
+        self.assertTrue(balanced.balanced)
+        self.assertEqual(balanced.state, "balanced")
+        self.assertEqual(balanced.difference, Decimal("0.00"))
+
+        over = reconcile(expected, {20: 4})
+        self.assertEqual(over.state, "over")
+        self.assertEqual(over.difference, Decimal("5.00"))
+        self.assertIn("$5.00", over.headline)
+
+        short = reconcile(expected, {20: 3})
+        self.assertEqual(short.state, "short")
+        self.assertEqual(short.difference, Decimal("-15.00"))
+        self.assertIn("$15.00", short.headline)
+
+    # ----------------------------------------------------------------- export
+
+    def test_export_csv_has_rows_and_totals(self) -> None:
+        self._product()
+        order = self.tracker.add_order(purchaser="Jim", quantity="10")
+        venmo = self.tracker.add_order(
+            purchaser="Ann", quantity="4", payment_method="venmo"
+        )
+        self.tracker.set_received(order.id, "6")
+        self.tracker.set_received(venmo.id, "4")
+
+        target = Path(self.tmp.name) / "out.csv"
+        written = self.tracker.export_csv(target)
+        self.assertTrue(written.exists())
+
+        with written.open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.reader(handle))
+
+        self.assertEqual(rows[0][0], "id")
+        self.assertIn("payment_method", rows[0])
+        self.assertEqual(rows[1][1], "Jim")
+        self.assertEqual(rows[1][rows[0].index("payment_method")], "cash")
+        self.assertEqual(rows[2][rows[0].index("payment_method")], "venmo")
+
+        flat = {r[0]: r[1] for r in rows if len(r) == 2}
+        self.assertIn("TOTALS", [r[0] for r in rows if r])
+        self.assertEqual(flat["Cash collected"], "75.00")
+        self.assertEqual(flat["Other collected"], "50.00")
+        self.assertEqual(flat["Orders"], "2")
+
+    def test_export_csv_refuses_a_missing_folder(self) -> None:
+        with self.assertRaises(TrackerError):
+            self.tracker.export_csv(Path(self.tmp.name) / "nope" / "out.csv")
 
 
 class WizardTests(unittest.TestCase):
@@ -397,6 +524,7 @@ class InteractiveTests(unittest.TestCase):
                 "1",
                 "Jim",
                 "10",
+                "venmo",
                 "2",
                 "1",
                 "5",
@@ -411,6 +539,7 @@ class InteractiveTests(unittest.TestCase):
         self.assertEqual(code, 0)
         orders = self.tracker.list_orders()
         self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0].payment_method, "venmo")
         self.assertEqual(orders[0].purchaser, "Jim")
         self.assertEqual(orders[0].quantity_received, Decimal("5"))
         self.assertIn("5 / 10", stdout.getvalue())

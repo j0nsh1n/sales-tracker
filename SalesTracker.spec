@@ -8,6 +8,7 @@ hiddenimports += [
     "sales_tracker",
     "salestracker",
     "salestracker.models",
+    "salestracker.finance",
     "salestracker.store",
     "salestracker.cli",
     "salestracker.ui",

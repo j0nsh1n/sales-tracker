@@ -20,32 +20,41 @@ from __future__ import annotations
 import argparse
 import tkinter as tk
 import tkinter.font as tkfont
+from decimal import Decimal
 from tkinter import messagebox, ttk
 
 from salestracker import (
+    CASH,
     DEFAULT_DB,
+    DENOMINATIONS,
+    PAYMENT_METHODS,
     UNITS,
-    Order,
     Product,
     SalesTracker,
     TrackerError,
+    count_cash,
     format_money,
     format_qty,
+    reconcile,
 )
+from tkinter import filedialog
 
-BG = "#E6EDE8"
-PANEL = "#F7FBF8"
-INK = "#14201C"
-MUTED = "#4A5C56"
+# Neutral surfaces, one accent, monospace reserved for figures. Every text
+# pair below clears WCAG AA (4.5:1); see docs/design/ for the rendered look.
+BG = "#FFFFFF"          # page
+PANEL = "#F7F8F8"       # raised surface: entry bar and dialogs
+SUBTLE = "#EFF1F0"      # pressed / hover fill
+INK = "#16191B"
+MUTED = "#5F6B66"
 ACCENT = "#0B6E4F"
-ACCENT_DARK = "#085541"
-BRASS = "#C9A227"
+ACCENT_DARK = "#095540"
+ACCENT_SOFT = "#E8F2EC"  # selected row
 DANGER = "#A61B1B"
-LINE = "#C5D4CC"
-ROW_ALT = "#EEF5F1"
-FOCUS = "#0B6E4F"
+LINE = "#E3E5E4"
+ROW_ALT = SUBTLE
+FOCUS = ACCENT
 WHITE = "#FFFFFF"
-RECEIVED_BG = "#E3F2EA"
+RECEIVED_BG = "#F1F7F3"
 
 
 class ProductWizard(tk.Toplevel):
@@ -487,17 +496,229 @@ class SettingsDialog(tk.Toplevel):
         messagebox.showinfo("Reset", "Products and orders were cleared.", parent=self)
 
 
+class MoneyDialog(tk.Toplevel):
+    """Expected money on the left, an independent bill count on the right.
+
+    The ledger figure and the drawer count are arrived at separately; the
+    comparison at the bottom is the whole point of the page.
+    """
+
+    def __init__(self, master: tk.Tk, tracker: SalesTracker) -> None:
+        super().__init__(master)
+        self.tracker = tracker
+        self.title("Money")
+        self.configure(bg=PANEL)
+        self.transient(master)
+        self.minsize(760, 560)
+        self.geometry("820x620")
+
+        self.money = tracker.financials()
+        self.var_counts: dict[int, tk.StringVar] = {}
+        self.var_subtotals: dict[int, tk.StringVar] = {}
+        self.var_counted = tk.StringVar(value=format_money(Decimal("0.00")))
+        self.var_expected = tk.StringVar(
+            value=format_money(self.money.cash_collected)
+        )
+        self.var_verdict = tk.StringVar(value="Enter your bill counts to compare.")
+        self.var_note = tk.StringVar(value="")
+
+        pad = ttk.Frame(self, style="Panel.TFrame", padding=22)
+        pad.pack(fill="both", expand=True)
+        pad.columnconfigure(0, weight=1)
+        pad.columnconfigure(1, weight=1)
+        pad.rowconfigure(1, weight=1)
+
+        ttk.Label(pad, text="Money", style="Section.TLabel").grid(
+            row=0, column=0, columnspan=2, sticky="w"
+        )
+        ttk.Label(
+            pad,
+            text="The ledger works out what should be in the drawer. Count your "
+                 "bills yourself and compare — if the two disagree, something "
+                 "was mislogged.",
+            style="Hint.TLabel", wraplength=740,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 16))
+
+        self._build_expected(pad)
+        self._build_count(pad)
+        self._build_verdict(pad)
+
+        ttk.Button(pad, text="Close", style="Ghost.TButton",
+                   command=self.destroy).grid(row=4, column=0, columnspan=2,
+                                              sticky="ew", pady=(14, 0))
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.grab_set()
+        self._recount()
+
+    # ------------------------------------------------------------- expected
+
+    def _build_expected(self, parent: ttk.Frame) -> None:
+        box = ttk.Frame(parent, style="Panel.TFrame")
+        box.grid(row=2, column=0, sticky="nsew", padx=(0, 18))
+        ttk.Label(box, text="EXPECTED FROM THE LEDGER",
+                  style="Field.TLabel").pack(anchor="w", pady=(0, 8))
+
+        money = self.money
+        rows = (
+            ("Cash collected", money.cash_collected, True),
+            ("Cash still to collect", money.cash_uncollected, False),
+            ("Venmo / other collected", money.other_collected, False),
+            ("Venmo / other still to collect", money.other_uncollected, False),
+            (None, None, False),
+            ("Total collected", money.total_collected, False),
+            ("Total still to collect", money.total_uncollected, False),
+            ("Full order value", money.book_value, False),
+        )
+        for label, amount, emphasis in rows:
+            if label is None:
+                tk.Frame(box, bg=LINE, height=1).pack(fill="x", pady=8)
+                continue
+            line = ttk.Frame(box, style="Panel.TFrame")
+            line.pack(fill="x", pady=2)
+            ttk.Label(line, text=label,
+                      style="Field.TLabel" if emphasis else "Hint.TLabel").pack(side="left")
+            ttk.Label(line, text=format_money(amount),
+                      style="Figure.TLabel" if emphasis else "FigureMuted.TLabel").pack(
+                side="right"
+            )
+
+        ttk.Label(
+            box,
+            text="Only cash reaches the drawer. Venmo and other payments are "
+                 "excluded from the comparison below.",
+            style="Hint.TLabel", wraplength=330,
+        ).pack(anchor="w", pady=(14, 0))
+
+    # ---------------------------------------------------------------- count
+
+    def _build_count(self, parent: ttk.Frame) -> None:
+        box = ttk.Frame(parent, style="Panel.TFrame")
+        box.grid(row=2, column=1, sticky="nsew")
+        ttk.Label(box, text="YOUR BILL COUNT", style="Field.TLabel").pack(
+            anchor="w", pady=(0, 8)
+        )
+
+        grid = ttk.Frame(box, style="Panel.TFrame")
+        grid.pack(fill="x")
+        grid.columnconfigure(2, weight=1)
+        for row, denomination in enumerate(DENOMINATIONS):
+            ttk.Label(grid, text=f"${denomination}", style="Figure.TLabel").grid(
+                row=row, column=0, sticky="w", pady=3
+            )
+            var = tk.StringVar(value="")
+            self.var_counts[denomination] = var
+            entry = ttk.Entry(grid, textvariable=var, style="Ticket.TEntry",
+                              width=6, justify="right")
+            entry.grid(row=row, column=1, sticky="w", padx=(12, 10), pady=3)
+            var.trace_add("write", lambda *_: self._recount())
+            sub = tk.StringVar(value=format_money(Decimal("0.00")))
+            self.var_subtotals[denomination] = sub
+            ttk.Label(grid, textvariable=sub, style="FigureMuted.TLabel").grid(
+                row=row, column=2, sticky="e", pady=3
+            )
+
+        tk.Frame(box, bg=LINE, height=1).pack(fill="x", pady=10)
+        total = ttk.Frame(box, style="Panel.TFrame")
+        total.pack(fill="x")
+        ttk.Label(total, text="COUNTED", style="Field.TLabel").pack(side="left")
+        ttk.Label(total, textvariable=self.var_counted,
+                  style="Figure.TLabel").pack(side="right")
+        ttk.Button(box, text="Clear counts", style="Ghost.TButton",
+                   command=self._clear).pack(anchor="e", pady=(10, 0))
+
+    # -------------------------------------------------------------- verdict
+
+    def _build_verdict(self, parent: ttk.Frame) -> None:
+        box = ttk.Frame(parent, style="Panel.TFrame")
+        box.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(18, 0))
+        tk.Frame(box, bg=LINE, height=1).pack(fill="x", pady=(0, 12))
+
+        line = ttk.Frame(box, style="Panel.TFrame")
+        line.pack(fill="x")
+        for caption, var in (("COUNTED", self.var_counted),
+                             ("EXPECTED CASH", self.var_expected)):
+            cell = ttk.Frame(line, style="Panel.TFrame")
+            cell.pack(side="left", padx=(0, 40))
+            ttk.Label(cell, text=caption, style="Field.TLabel").pack(anchor="w")
+            ttk.Label(cell, textvariable=var, style="Figure.TLabel").pack(anchor="w")
+
+        self.verdict_label = ttk.Label(box, textvariable=self.var_verdict,
+                                       style="Hint.TLabel", wraplength=740)
+        self.verdict_label.pack(anchor="w", pady=(12, 0))
+        ttk.Label(box, textvariable=self.var_note, style="Hint.TLabel",
+                  wraplength=740).pack(anchor="w", pady=(2, 0))
+
+    # ------------------------------------------------------------ behaviour
+
+    def _clear(self) -> None:
+        for var in self.var_counts.values():
+            var.set("")
+
+    def _recount(self) -> None:
+        raw = {d: v.get() for d, v in self.var_counts.items()}
+        try:
+            counted = count_cash(raw)
+        except TrackerError as exc:
+            self.var_counted.set("—")
+            self.var_verdict.set(str(exc))
+            self.verdict_label.configure(style="Error.TLabel")
+            self.var_note.set("")
+            return
+
+        for denomination, var in self.var_subtotals.items():
+            text = str(raw.get(denomination, "")).strip()
+            number = int(text) if text.isdigit() else 0
+            var.set(format_money(Decimal(denomination) * number))
+
+        self.var_counted.set(format_money(counted))
+        if not any(str(v).strip() for v in raw.values()):
+            self.var_verdict.set("Enter your bill counts to compare.")
+            self.verdict_label.configure(style="Hint.TLabel")
+            self.var_note.set("")
+            return
+
+        result = reconcile(self.money.cash_collected, raw)
+        self.var_verdict.set(result.headline)
+        self.verdict_label.configure(
+            style="Good.TLabel" if result.balanced else "Error.TLabel"
+        )
+        self.var_note.set(
+            "" if result.balanced else
+            "Check for a mislogged quantity, an order paid by venmo but "
+            "recorded as cash, or change given from the drawer."
+        )
+
+
 class SalesApp(tk.Tk):
+    """Main window. The order list is the primary surface; entry is a top bar."""
+
+    COLUMNS = ("purchaser", "product", "progress", "due", "status", "method")
+    HEADINGS = {
+        "purchaser": ("Purchaser", 180, "w"),
+        "product": ("Product", 140, "w"),
+        "progress": ("Received / ordered", 205, "w"),
+        "due": ("Still due", 85, "e"),
+        "status": ("Status", 110, "w"),
+        "method": ("Paid by", 90, "w"),
+    }
+    BAR_CELLS = 6
+    # Tk paints one foreground per row, so the bar must read monochrome.
+    # U+25A0/U+25A1 are equal-width and present in Segoe UI for the Windows exe.
+    BAR_FULL = "\u25a0"
+    BAR_EMPTY = "\u25a1"
+
     def __init__(self, db_path: str | None = None, *, auto_setup: bool = True) -> None:
         super().__init__()
         self.tracker = SalesTracker(db_path)
         self.selected_order_id: int | None = None
-        self._status_filter = "all"
         self._auto_setup = auto_setup
+        self._editor: ttk.Entry | None = None
+        self._row_error: ttk.Label | None = None
+        self._flash_job: str | None = None
 
-        self.title("Ledger — Sales Tracker")
-        self.minsize(1100, 700)
-        self.geometry("1220x760")
+        self.title("Sales Tracker")
+        self.minsize(940, 580)
+        self.geometry("1080x700")
         self.configure(bg=BG)
 
         self._fonts()
@@ -511,6 +732,8 @@ class SalesApp(tk.Tk):
         if self._auto_setup:
             self.after(200, self._maybe_prompt_product)
 
+    # ------------------------------------------------------------------ chrome
+
     def _fonts(self) -> None:
         available = set(tkfont.families())
 
@@ -520,168 +743,121 @@ class SalesApp(tk.Tk):
                     return name
             return fallback
 
-        display = pick("Inter Display", "Space Grotesk", "Inter", "Cantarell")
         body = pick("Inter", "Adwaita Sans", "Cantarell", "Noto Sans")
         figures = pick(
-            "JetBrainsMono Nerd Font", "Source Code Pro", "Hack", "Liberation Mono"
+            "JetBrainsMono Nerd Font", "JetBrains Mono", "Source Code Pro",
+            "Hack", "Liberation Mono",
         )
 
-        self.font_kicker = tkfont.Font(family=body, size=10, weight="bold")
-        self.font_title = tkfont.Font(family=display, size=24, weight="bold")
-        self.font_body = tkfont.Font(family=body, size=12)
-        self.font_label = tkfont.Font(family=body, size=10, weight="bold")
-        self.font_muted = tkfont.Font(family=body, size=11)
-        self.font_button = tkfont.Font(family=body, size=12, weight="bold")
-        self.font_figures = tkfont.Font(family=figures, size=26, weight="bold")
-        self.font_stat = tkfont.Font(family=figures, size=16, weight="bold")
-        self.font_table = tkfont.Font(family=body, size=11)
-        self.font_heading = tkfont.Font(family=body, size=10, weight="bold")
+        # Names read by ProductWizard; keep them.
+        self.font_title = tkfont.Font(family=body, size=15, weight="bold")
+        self.font_body = tkfont.Font(family=body, size=11)
+        self.font_muted = tkfont.Font(family=body, size=10)
+        self.font_label = tkfont.Font(family=body, size=9, weight="bold")
+        self.font_button = tkfont.Font(family=body, size=11, weight="bold")
+
+        self.font_row = tkfont.Font(family=body, size=11)
+        self.font_figures = tkfont.Font(family=figures, size=11)
+        self.font_stat = tkfont.Font(family=figures, size=17, weight="bold")
 
     def _style(self) -> None:
         style = ttk.Style(self)
         style.theme_use("clam")
+
         style.configure("App.TFrame", background=BG)
         style.configure("Panel.TFrame", background=PANEL)
-        style.configure("Header.TFrame", background=INK)
-        style.configure("Kicker.TLabel", background=INK, foreground=BRASS, font=self.font_kicker)
-        style.configure("Title.TLabel", background=INK, foreground=WHITE, font=self.font_title)
-        style.configure(
-            "HeaderMuted.TLabel", background=INK, foreground="#A8C4B8", font=self.font_muted
-        )
-        style.configure("Today.TLabel", background=INK, foreground=WHITE, font=self.font_figures)
+        style.configure("Bar.TFrame", background=PANEL)
+
+        style.configure("Title.TLabel", background=BG, foreground=INK, font=self.font_title)
+        style.configure("Meta.TLabel", background=BG, foreground=MUTED, font=self.font_muted)
         style.configure("Section.TLabel", background=PANEL, foreground=INK, font=self.font_title)
         style.configure("Field.TLabel", background=PANEL, foreground=MUTED, font=self.font_label)
         style.configure("Hint.TLabel", background=PANEL, foreground=MUTED, font=self.font_muted)
         style.configure("Error.TLabel", background=PANEL, foreground=DANGER, font=self.font_muted)
+        style.configure("StatCaption.TLabel", background=BG, foreground=MUTED, font=self.font_label)
+        style.configure("StatValue.TLabel", background=BG, foreground=ACCENT, font=self.font_stat)
+        style.configure("Ok.TLabel", background=BG, foreground=ACCENT, font=self.font_muted)
+        style.configure("Foot.TLabel", background=BG, foreground=MUTED, font=self.font_muted)
+        style.configure("Empty.TLabel", background=BG, foreground=MUTED, font=self.font_muted)
+        style.configure("RowErr.TLabel", background=ACCENT_SOFT, foreground=DANGER,
+                        font=self.font_muted)
+        style.configure("Figure.TLabel", background=PANEL, foreground=INK,
+                        font=self.font_figures)
+        style.configure("FigureMuted.TLabel", background=PANEL, foreground=MUTED,
+                        font=self.font_figures)
+        style.configure("Good.TLabel", background=PANEL, foreground=ACCENT,
+                        font=self.font_muted)
+
+        for name in ("Ticket.TEntry", "Cell.TEntry"):
+            style.configure(
+                name, fieldbackground=WHITE, foreground=INK, insertcolor=INK,
+                bordercolor=LINE, lightcolor=LINE, darkcolor=LINE,
+                padding=6, font=self.font_body,
+            )
+            style.map(
+                name,
+                bordercolor=[("focus", FOCUS)],
+                lightcolor=[("focus", FOCUS)],
+                darkcolor=[("focus", FOCUS)],
+            )
+        # A rejected inline edit carries its own state, on the row.
         style.configure(
-            "StatCaption.TLabel", background=PANEL, foreground=MUTED, font=self.font_label
-        )
-        style.configure("StatValue.TLabel", background=PANEL, foreground=ACCENT, font=self.font_stat)
-        style.configure("Empty.TLabel", background=PANEL, foreground=MUTED, font=self.font_muted)
-        style.configure(
-            "Ticket.TEntry",
-            fieldbackground=WHITE,
-            foreground=INK,
-            insertcolor=INK,
-            bordercolor=LINE,
-            lightcolor=LINE,
-            darkcolor=LINE,
-            padding=8,
-            font=self.font_body,
-        )
-        style.map(
-            "Ticket.TEntry",
-            bordercolor=[("focus", FOCUS)],
-            lightcolor=[("focus", FOCUS)],
-            darkcolor=[("focus", FOCUS)],
-        )
-        style.configure(
-            "Ticket.TCombobox",
-            fieldbackground=WHITE,
-            foreground=INK,
-            bordercolor=LINE,
-            padding=6,
-            font=self.font_body,
-        )
-        style.configure(
-            "Primary.TButton",
-            background=ACCENT,
-            foreground=WHITE,
-            bordercolor=ACCENT,
-            focusthickness=3,
-            focuscolor=BRASS,
-            padding=(16, 10),
-            font=self.font_button,
-        )
-        style.map(
-            "Primary.TButton",
-            background=[("active", ACCENT_DARK), ("disabled", "#8AA89A")],
-            foreground=[("disabled", WHITE)],
-        )
-        style.configure(
-            "Ghost.TButton",
-            background=PANEL,
-            foreground=INK,
-            bordercolor=LINE,
-            focusthickness=3,
-            focuscolor=FOCUS,
-            padding=(12, 8),
-            font=self.font_body,
-        )
-        style.map("Ghost.TButton", background=[("active", ROW_ALT)])
-        style.configure(
-            "Danger.TButton",
-            background=PANEL,
-            foreground=DANGER,
-            bordercolor=LINE,
-            focusthickness=3,
-            focuscolor=DANGER,
-            padding=(12, 8),
-            font=self.font_body,
-        )
-        style.map("Danger.TButton", background=[("active", "#F8E8E8")])
-        style.configure(
-            "Filter.TRadiobutton",
-            background=PANEL,
-            foreground=INK,
-            font=self.font_body,
-            focuscolor=FOCUS,
-        )
-        style.configure(
-            "Ledger.Treeview",
-            background=WHITE,
-            fieldbackground=WHITE,
-            foreground=INK,
-            rowheight=36,
-            font=self.font_table,
-            bordercolor=LINE,
-        )
-        style.configure(
-            "Ledger.Treeview.Heading",
-            background=ROW_ALT,
-            foreground=MUTED,
-            font=self.font_heading,
-            relief="flat",
-            padding=(8, 8),
-        )
-        style.map(
-            "Ledger.Treeview",
-            background=[("selected", ACCENT)],
-            foreground=[("selected", WHITE)],
-        )
-        style.configure(
-            "Ledger.Vertical.TScrollbar",
-            background=PANEL,
-            troughcolor=ROW_ALT,
-            bordercolor=LINE,
-            arrowcolor=INK,
-        )
-        style.configure(
-            "Fill.Horizontal.TProgressbar",
-            troughcolor=ROW_ALT,
-            background=ACCENT,
-            bordercolor=LINE,
-            lightcolor=ACCENT,
-            darkcolor=ACCENT,
+            "Bad.TEntry", fieldbackground=WHITE, foreground=DANGER, insertcolor=DANGER,
+            bordercolor=DANGER, lightcolor=DANGER, darkcolor=DANGER,
+            padding=6, font=self.font_body,
         )
 
+        style.configure("Ticket.TCombobox", fieldbackground=WHITE, foreground=INK,
+                        bordercolor=LINE, padding=5, font=self.font_body)
+
+        style.configure("Primary.TButton", background=ACCENT, foreground=WHITE,
+                        bordercolor=ACCENT, focusthickness=3, focuscolor=ACCENT_SOFT,
+                        padding=(14, 8), font=self.font_button)
+        style.map("Primary.TButton",
+                  background=[("active", ACCENT_DARK), ("disabled", "#9BB3A8")],
+                  foreground=[("disabled", WHITE)])
+
+        style.configure("Ghost.TButton", background=PANEL, foreground=INK,
+                        bordercolor=LINE, focusthickness=3, focuscolor=FOCUS,
+                        padding=(11, 7), font=self.font_body)
+        style.map("Ghost.TButton", background=[("active", SUBTLE)])
+
+        style.configure("Danger.TButton", background=PANEL, foreground=DANGER,
+                        bordercolor=LINE, focusthickness=3, focuscolor=DANGER,
+                        padding=(11, 7), font=self.font_body)
+        style.map("Danger.TButton", background=[("active", "#F8E8E8")])
+
+        style.configure("Filter.TRadiobutton", background=BG, foreground=INK,
+                        font=self.font_muted, focuscolor=FOCUS)
+
+        style.configure("Ledger.Treeview", background=WHITE, fieldbackground=WHITE,
+                        foreground=INK, rowheight=34, font=self.font_row,
+                        bordercolor=LINE)
+        style.configure("Ledger.Treeview.Heading", background=BG, foreground=MUTED,
+                        font=self.font_label, relief="flat", padding=(8, 9))
+        style.map("Ledger.Treeview",
+                  background=[("selected", ACCENT_SOFT)],
+                  foreground=[("selected", INK)])
+
+        style.configure("Ledger.Vertical.TScrollbar", background=PANEL,
+                        troughcolor=SUBTLE, bordercolor=LINE, arrowcolor=MUTED)
+
     def _vars(self) -> None:
-        self.var_headline = tk.StringVar(value="Establish a product")
         self.var_meta = tk.StringVar(value="Nothing to sell yet")
-        self.var_due = tk.StringVar(value="0")
         self.var_purchaser = tk.StringVar()
         self.var_product = tk.StringVar()
         self.var_qty = tk.StringVar()
         self.var_qty_label = tk.StringVar(value="HOW MANY")
+        self.var_method = tk.StringVar(value=CASH)
         self.var_error = tk.StringVar()
+        self.var_ok = tk.StringVar()
         self.var_search = tk.StringVar()
         self.var_filter = tk.StringVar(value="all")
-        self.var_count = tk.StringVar(value="0 on the list")
+        self.var_count = tk.StringVar(value="0")
         self.var_outstanding = tk.StringVar(value="0")
         self.var_received = tk.StringVar(value="0")
-        self.var_detail = tk.StringVar(value="Select a name to update what they have received.")
+        self.var_due = tk.StringVar(value="0")
         self.var_got = tk.StringVar()
-        self.var_got_hint = tk.StringVar(value="")
         self.var_search.trace_add("write", lambda *_: self.refresh())
         self.var_product.trace_add("write", lambda *_: self._sync_qty_label())
 
@@ -689,243 +865,190 @@ class SalesApp(tk.Tk):
         menu = tk.Menu(self)
         ledger = tk.Menu(menu, tearoff=0)
         ledger.add_command(label="New product…", command=self.open_wizard)
+        ledger.add_command(label="Money…", command=self.open_money)
+        ledger.add_command(label="Export CSV…", command=self.export_csv)
         ledger.add_command(label="Settings…", command=self.open_settings)
         ledger.add_separator()
         ledger.add_command(label="Quit", command=self._on_close)
         menu.add_cascade(label="Ledger", menu=ledger)
         self.config(menu=menu)
 
+    def _rule(self) -> None:
+        tk.Frame(self, bg=LINE, height=1).pack(fill="x")
+
     def _build(self) -> None:
-        header = ttk.Frame(self, style="Header.TFrame", padding=(28, 18, 28, 16))
-        header.pack(fill="x")
-        left = ttk.Frame(header, style="Header.TFrame")
-        left.pack(side="left", fill="y")
-        ttk.Label(left, text="LEDGER  ·  SALES TRACKER", style="Kicker.TLabel").pack(anchor="w")
-        ttk.Label(left, textvariable=self.var_headline, style="Title.TLabel").pack(
-            anchor="w", pady=(4, 0)
+        self._build_header()
+        self._rule()
+        self._build_entry()
+        self._rule()
+        self._build_stats()
+        self._build_filters()
+        self._build_table()
+        self._build_footer()
+
+    def _build_header(self) -> None:
+        head = ttk.Frame(self, style="App.TFrame", padding=(20, 14, 20, 12))
+        head.pack(fill="x")
+        ttk.Label(head, text="Sales Tracker", style="Title.TLabel").pack(side="left")
+        ttk.Label(head, textvariable=self.var_meta, style="Meta.TLabel").pack(
+            side="left", padx=(12, 0), pady=(6, 0)
         )
-        ttk.Label(left, textvariable=self.var_meta, style="HeaderMuted.TLabel").pack(
-            anchor="w", pady=(2, 0)
-        )
-        right = ttk.Frame(header, style="Header.TFrame")
-        right.pack(side="right")
-        ttk.Label(right, text="STILL TO HAND OUT", style="Kicker.TLabel").pack(anchor="e")
-        ttk.Label(right, textvariable=self.var_due, style="Today.TLabel").pack(anchor="e")
-        brass = tk.Frame(right, bg=BRASS, height=4)
-        brass.pack(fill="x", pady=(8, 0))
-        ttk.Button(right, text="Settings", style="Ghost.TButton", command=self.open_settings).pack(
-            anchor="e", pady=(10, 0)
-        )
+        ttk.Button(head, text="Settings", style="Ghost.TButton",
+                   command=self.open_settings).pack(side="right")
+        ttk.Button(head, text="Export CSV", style="Ghost.TButton",
+                   command=self.export_csv).pack(side="right", padx=(0, 8))
+        ttk.Button(head, text="Money", style="Primary.TButton",
+                   command=self.open_money).pack(side="right", padx=(0, 8))
 
-        body = ttk.Frame(self, style="App.TFrame", padding=20)
-        body.pack(fill="both", expand=True)
-        body.columnconfigure(1, weight=1)
-        body.rowconfigure(0, weight=1)
-        self._build_ticket(body)
-        self._build_register(body)
+    def _build_entry(self) -> None:
+        bar = ttk.Frame(self, style="Bar.TFrame", padding=(20, 12, 20, 10))
+        bar.pack(fill="x")
 
-        status = tk.Frame(self, bg=INK)
-        status.pack(fill="x", side="bottom")
-        tk.Label(
-            status,
-            text="Orders stay on this list until you reset them in Settings.  "
-            "Checking someone off only records what they have received.",
-            bg=INK,
-            fg="#A8C4B8",
-            font=self.font_muted,
-            anchor="w",
-            padx=20,
-            pady=8,
-        ).pack(fill="x")
+        # Shown instead of the form until a product exists.
+        self.need_product = ttk.Frame(bar, style="Bar.TFrame")
+        ttk.Label(self.need_product,
+                  text="Set up a product before you log the first order.",
+                  style="Hint.TLabel").pack(side="left", pady=(2, 0))
+        ttk.Button(self.need_product, text="Establish a product",
+                   style="Primary.TButton",
+                   command=self.open_wizard).pack(side="left", padx=(12, 0))
 
-    def _build_ticket(self, parent: ttk.Frame) -> None:
-        ticket = ttk.Frame(parent, style="Panel.TFrame", padding=22)
-        ticket.grid(row=0, column=0, sticky="nsw", padx=(0, 16))
-        tk.Frame(ticket, bg=ACCENT, width=6).place(x=0, y=0, relheight=1)
+        self.order_form = ttk.Frame(bar, style="Bar.TFrame")
+        row = ttk.Frame(self.order_form, style="Bar.TFrame")
+        row.pack(fill="x")
 
-        ttk.Label(ticket, text="New order", style="Section.TLabel").pack(anchor="w")
-        ttk.Label(
-            ticket,
-            text="Name of the purchaser, then how many they bought.",
-            style="Hint.TLabel",
-            wraplength=280,
-        ).pack(anchor="w", pady=(2, 16))
-
-        self.need_product = ttk.Frame(ticket, style="Panel.TFrame")
-        ttk.Label(
-            self.need_product,
-            text="Set up a product before you log the first order.",
-            style="Hint.TLabel",
-            wraplength=280,
-        ).pack(anchor="w", pady=(0, 10))
-        ttk.Button(
-            self.need_product,
-            text="Establish a product",
-            style="Primary.TButton",
-            command=self.open_wizard,
-        ).pack(fill="x")
-
-        self.order_form = ttk.Frame(ticket, style="Panel.TFrame")
-        self.purchaser_entry = self._labeled(self.order_form, "PURCHASER", self.var_purchaser)
-        ttk.Label(self.order_form, text="PRODUCT", style="Field.TLabel").pack(
-            anchor="w", pady=(0, 4)
-        )
+        self.purchaser_entry = self._field(row, "PURCHASER", self.var_purchaser, 24)
+        self._field_label(row, "PRODUCT")
         self.product_combo = ttk.Combobox(
-            self.order_form,
-            textvariable=self.var_product,
-            state="readonly",
-            style="Ticket.TCombobox",
+            self._last_box, textvariable=self.var_product, state="readonly",
+            style="Ticket.TCombobox", width=18,
         )
-        self.product_combo.pack(fill="x", ipady=4, pady=(0, 10))
-        ttk.Button(
-            self.order_form,
-            text="New product…",
-            style="Ghost.TButton",
-            command=self.open_wizard,
-        ).pack(fill="x", pady=(0, 12))
-        self.qty_entry = self._labeled(self.order_form, "HOW MANY", self.var_qty, self.var_qty_label)
-        ttk.Label(self.order_form, textvariable=self.var_error, style="Error.TLabel").pack(
-            anchor="w", pady=(0, 10)
+        self.product_combo.pack(anchor="w", ipady=2)
+        self.qty_entry = self._field(row, "HOW MANY", self.var_qty, 8,
+                                     label_var=self.var_qty_label)
+        self._field_label(row, "PAID BY")
+        self.method_combo = ttk.Combobox(
+            self._last_box, textvariable=self.var_method, state="readonly",
+            style="Ticket.TCombobox", width=8, values=list(PAYMENT_METHODS),
         )
-        ttk.Button(
-            self.order_form,
-            text="Log order",
-            style="Primary.TButton",
-            command=self.log_order,
-        ).pack(fill="x")
+        self.method_combo.pack(anchor="w", ipady=2)
 
-    def _labeled(
-        self,
-        parent: ttk.Frame,
-        label: str,
-        variable: tk.StringVar,
-        label_var: tk.StringVar | None = None,
-    ) -> ttk.Entry:
-        wrap = ttk.Frame(parent, style="Panel.TFrame")
-        wrap.pack(fill="x", pady=(0, 10))
+        actions = ttk.Frame(row, style="Bar.TFrame")
+        actions.pack(side="left", padx=(4, 0))
+        ttk.Label(actions, text=" ", style="Field.TLabel").pack(anchor="w")
+        ttk.Button(actions, text="Log order", style="Primary.TButton",
+                   command=self.log_order).pack(anchor="w")
+
+        hint = ttk.Frame(row, style="Bar.TFrame")
+        hint.pack(side="left", padx=(12, 0))
+        ttk.Label(hint, text=" ", style="Field.TLabel").pack(anchor="w")
+        ttk.Label(hint, text="Enter submits  ·  Ctrl+N new product",
+                  style="Hint.TLabel").pack(anchor="w", pady=(6, 0))
+
+        # The order form's error belongs under the order form.
+        ttk.Label(bar, textvariable=self.var_error, style="Error.TLabel").pack(
+            anchor="w", pady=(8, 0)
+        )
+
+    def _field_label(self, parent: ttk.Frame, text: str,
+                     label_var: tk.StringVar | None = None) -> None:
+        box = ttk.Frame(parent, style="Bar.TFrame")
+        box.pack(side="left", padx=(0, 10))
         if label_var is None:
-            ttk.Label(wrap, text=label, style="Field.TLabel").pack(anchor="w", pady=(0, 4))
+            ttk.Label(box, text=text, style="Field.TLabel").pack(anchor="w", pady=(0, 3))
         else:
-            ttk.Label(wrap, textvariable=label_var, style="Field.TLabel").pack(
-                anchor="w", pady=(0, 4)
+            ttk.Label(box, textvariable=label_var, style="Field.TLabel").pack(
+                anchor="w", pady=(0, 3)
             )
-        entry = ttk.Entry(wrap, textvariable=variable, style="Ticket.TEntry")
-        entry.pack(fill="x", ipady=4)
+        self._last_box = box
+
+    def _field(self, parent: ttk.Frame, text: str, variable: tk.StringVar,
+               width: int, label_var: tk.StringVar | None = None) -> ttk.Entry:
+        self._field_label(parent, text, label_var)
+        entry = ttk.Entry(self._last_box, textvariable=variable,
+                          style="Ticket.TEntry", width=width)
+        entry.pack(anchor="w", ipady=2)
         return entry
 
-    def _build_register(self, parent: ttk.Frame) -> None:
-        register = ttk.Frame(parent, style="Panel.TFrame", padding=18)
-        register.grid(row=0, column=1, sticky="nsew")
-        register.columnconfigure(0, weight=1)
-        register.rowconfigure(2, weight=1)
-
-        stats = ttk.Frame(register, style="Panel.TFrame")
-        stats.grid(row=0, column=0, sticky="ew", pady=(0, 12))
-        for i in range(3):
-            stats.columnconfigure(i, weight=1)
-        self._stat(stats, 0, "ON THE LIST", self.var_count)
-        self._stat(stats, 1, "OUTSTANDING", self.var_outstanding)
-        self._stat(stats, 2, "RECEIVED", self.var_received)
-
-        filters = ttk.Frame(register, style="Panel.TFrame")
-        filters.grid(row=1, column=0, sticky="ew", pady=(0, 10))
-        ttk.Label(filters, text="SEARCH", style="Field.TLabel").pack(side="left")
-        search = ttk.Entry(filters, textvariable=self.var_search, style="Ticket.TEntry", width=20)
-        search.pack(side="left", padx=(8, 16), ipady=3)
-        for value, label in (
-            ("all", "All"),
-            ("outstanding", "Outstanding"),
-            ("received", "Received"),
+    def _build_stats(self) -> None:
+        stats = ttk.Frame(self, style="App.TFrame", padding=(20, 12, 20, 4))
+        stats.pack(fill="x")
+        for caption, var in (
+            ("ON THE LIST", self.var_count),
+            ("OUTSTANDING", self.var_outstanding),
+            ("RECEIVED", self.var_received),
+            ("UNITS STILL DUE", self.var_due),
         ):
-            ttk.Radiobutton(
-                filters,
-                text=label,
-                value=value,
-                variable=self.var_filter,
-                style="Filter.TRadiobutton",
-                command=self.refresh,
-            ).pack(side="left", padx=(0, 8))
+            cell = ttk.Frame(stats, style="App.TFrame")
+            cell.pack(side="left", padx=(0, 36))
+            ttk.Label(cell, text=caption, style="StatCaption.TLabel").pack(anchor="w")
+            ttk.Label(cell, textvariable=var, style="StatValue.TLabel").pack(anchor="w")
 
-        table_wrap = ttk.Frame(register, style="Panel.TFrame")
-        table_wrap.grid(row=2, column=0, sticky="nsew")
-        table_wrap.columnconfigure(0, weight=1)
-        table_wrap.rowconfigure(0, weight=1)
-
-        columns = ("purchaser", "product", "progress", "remaining", "status")
-        self.tree = ttk.Treeview(
-            table_wrap,
-            columns=columns,
-            show="headings",
-            style="Ledger.Treeview",
-            selectmode="browse",
+    def _build_filters(self) -> None:
+        row = ttk.Frame(self, style="App.TFrame", padding=(20, 6, 20, 8))
+        row.pack(fill="x")
+        for value, label in (("all", "All"), ("outstanding", "Outstanding"),
+                             ("received", "Received")):
+            ttk.Radiobutton(row, text=label, value=value, variable=self.var_filter,
+                            style="Filter.TRadiobutton",
+                            command=self.refresh).pack(side="left", padx=(0, 12))
+        ttk.Entry(row, textvariable=self.var_search, style="Ticket.TEntry",
+                  width=22).pack(side="right", ipady=2)
+        ttk.Label(row, text="SEARCH", style="StatCaption.TLabel").pack(
+            side="right", padx=(0, 8)
         )
-        headings = {
-            "purchaser": ("Purchaser", 180, "w"),
-            "product": ("Product", 150, "w"),
-            "progress": ("Received / ordered", 150, "e"),
-            "remaining": ("Still due", 90, "e"),
-            "status": ("Status", 120, "w"),
-        }
-        for key, (title, width, anchor) in headings.items():
+
+    def _build_table(self) -> None:
+        wrap = ttk.Frame(self, style="App.TFrame", padding=(20, 0, 20, 0))
+        wrap.pack(fill="both", expand=True)
+        wrap.columnconfigure(0, weight=1)
+        wrap.rowconfigure(0, weight=1)
+
+        self.tree = ttk.Treeview(wrap, columns=self.COLUMNS, show="headings",
+                                 style="Ledger.Treeview", selectmode="browse")
+        for key, (title, width, anchor) in self.HEADINGS.items():
             self.tree.heading(key, text=title)
             self.tree.column(key, width=width, anchor=anchor, stretch=True)
-        scroll = ttk.Scrollbar(
-            table_wrap,
-            orient="vertical",
-            command=self.tree.yview,
-            style="Ledger.Vertical.TScrollbar",
-        )
+        scroll = ttk.Scrollbar(wrap, orient="vertical", command=self.tree.yview,
+                               style="Ledger.Vertical.TScrollbar")
         self.tree.configure(yscrollcommand=scroll.set)
         self.tree.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns")
-        self.tree.tag_configure("odd", background=WHITE)
-        self.tree.tag_configure("even", background=ROW_ALT)
-        self.tree.tag_configure("done", background=RECEIVED_BG)
+
+        self.tree.tag_configure("done", background=RECEIVED_BG, foreground=MUTED)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.tree.bind("<Double-1>", self.begin_edit)
+        self.tree.bind("<Return>", self.begin_edit)
 
-        self.empty_label = ttk.Label(
-            table_wrap,
-            text="No orders yet. Log a purchaser on the left.",
-            style="Empty.TLabel",
-            justify="center",
-        )
+        self.empty_label = ttk.Label(wrap, style="Empty.TLabel", justify="center")
 
-        detail = ttk.Frame(register, style="Panel.TFrame")
-        detail.grid(row=3, column=0, sticky="ew", pady=(12, 0))
-        ttk.Label(detail, text="HANDED OUT SO FAR", style="Field.TLabel").pack(anchor="w")
-        ttk.Label(detail, textvariable=self.var_detail, style="Hint.TLabel", wraplength=640).pack(
-            anchor="w", pady=(2, 8)
-        )
-        row = ttk.Frame(detail, style="Panel.TFrame")
-        row.pack(fill="x")
-        ttk.Label(row, textvariable=self.var_got_hint, style="Field.TLabel").pack(side="left")
-        self.got_entry = ttk.Entry(row, textvariable=self.var_got, style="Ticket.TEntry", width=10)
-        self.got_entry.pack(side="left", padx=(8, 8), ipady=4)
-        ttk.Button(row, text="Update received", style="Primary.TButton", command=self.update_received).pack(
-            side="left"
-        )
-        ttk.Button(
-            row,
-            text="Mark all received",
-            style="Ghost.TButton",
-            command=self.mark_all_received,
-        ).pack(side="left", padx=(8, 0))
-        self.progress = ttk.Progressbar(
-            detail, style="Fill.Horizontal.TProgressbar", maximum=100, mode="determinate"
-        )
-        self.progress.pack(fill="x", pady=(10, 0))
-
-    def _stat(self, parent: ttk.Frame, column: int, caption: str, variable: tk.StringVar) -> None:
-        cell = ttk.Frame(parent, style="Panel.TFrame", padding=(8, 4))
-        cell.grid(row=0, column=column, sticky="ew")
-        ttk.Label(cell, text=caption, style="StatCaption.TLabel").pack(anchor="w")
-        ttk.Label(cell, textvariable=variable, style="StatValue.TLabel").pack(anchor="w")
+    def _build_footer(self) -> None:
+        self._rule()
+        foot = ttk.Frame(self, style="App.TFrame", padding=(20, 8, 20, 10))
+        foot.pack(fill="x")
+        ttk.Label(foot, textvariable=self.var_ok, style="Ok.TLabel").pack(side="left")
+        ttk.Label(
+            foot,
+            text="Double-click a row (or press Enter) to record what they received.",
+            style="Foot.TLabel",
+        ).pack(side="right")
 
     def _binds(self) -> None:
         self.bind("<Control-s>", lambda _e: self.log_order())
         self.bind("<Control-n>", lambda _e: self.open_wizard())
         self.bind("<Control-comma>", lambda _e: self.open_settings())
-        self.got_entry.bind("<Return>", lambda _e: self.update_received())
+        for widget in (self.purchaser_entry, self.qty_entry, self.product_combo):
+            widget.bind("<Return>", lambda _e: self.log_order())
+
+    # ------------------------------------------------------------- transitions
+
+    def _flash(self, message: str) -> None:
+        self.var_ok.set(message)
+        if self._flash_job is not None:
+            self.after_cancel(self._flash_job)
+            self._flash_job = None
+        if message:
+            self._flash_job = self.after(5000, lambda: self.var_ok.set(""))
 
     def _maybe_prompt_product(self) -> None:
         if not self.tracker.list_products():
@@ -937,9 +1060,29 @@ class SalesApp(tk.Tk):
     def open_settings(self) -> None:
         SettingsDialog(self, self.tracker, on_change=self.refresh)
 
+    def open_money(self) -> None:
+        MoneyDialog(self, self.tracker)
+
+    def export_csv(self) -> None:
+        target = filedialog.asksaveasfilename(
+            parent=self, title="Export orders and totals",
+            defaultextension=".csv", initialfile="sales.csv",
+            filetypes=[("CSV file", "*.csv"), ("All files", "*.*")],
+        )
+        if not target:
+            return
+        try:
+            written = self.tracker.export_csv(target)
+        except (TrackerError, OSError) as exc:
+            messagebox.showerror("Export", str(exc), parent=self)
+            return
+        count = len(self.tracker.list_orders())
+        self._flash(f"Exported {count} order(s) to {written.name}")
+
     def _on_product_saved(self, product: Product) -> None:
         self.refresh(select_product=product.name)
         self.var_error.set("")
+        self._flash(f"Added {product.name}")
 
     def _sync_qty_label(self) -> None:
         name = self.var_product.get().strip()
@@ -968,6 +1111,8 @@ class SalesApp(tk.Tk):
         self._sync_qty_label()
         return products
 
+    # ------------------------------------------------------------------ orders
+
     def log_order(self) -> None:
         self.var_error.set("")
         try:
@@ -975,12 +1120,17 @@ class SalesApp(tk.Tk):
                 purchaser=self.var_purchaser.get(),
                 quantity=self.var_qty.get(),
                 product=self.var_product.get() or None,
+                payment_method=self.var_method.get() or CASH,
             )
         except TrackerError as exc:
             self.var_error.set(str(exc))
             return
         self.var_purchaser.set("")
         self.var_qty.set("")
+        self._flash(
+            f"Logged {order.purchaser} — {format_qty(order.quantity_ordered)} "
+            f"{order.product_unit} of {order.product_name}"
+        )
         self.refresh(select_id=order.id)
         self.purchaser_entry.focus_set()
 
@@ -994,32 +1144,70 @@ class SalesApp(tk.Tk):
         order_id = self._selected_id()
         self.selected_order_id = order_id
         if order_id is None:
-            self.var_detail.set("Select a name to update what they have received.")
             self.var_got.set("")
-            self.var_got_hint.set("")
-            self.progress["value"] = 0
             return
         try:
             order = self.tracker.get_order(order_id)
         except TrackerError:
             return
-        self._fill_detail(order)
-
-    def _fill_detail(self, order: Order) -> None:
-        unit = order.product_unit
-        self.var_detail.set(
-            f"{order.purchaser} ordered {format_qty(order.quantity_ordered)} {unit} "
-            f"of {order.product_name}."
-        )
         self.var_got.set(format_qty(order.quantity_received))
-        self.var_got_hint.set(f"RECEIVED SO FAR (of {format_qty(order.quantity_ordered)})")
-        if order.quantity_ordered > 0:
-            pct = float(order.quantity_received / order.quantity_ordered * 100)
-        else:
-            pct = 0.0
-        self.progress["value"] = min(100.0, pct)
+
+    # ------------------------------------------------- inline received editing
+
+    def begin_edit(self, _event: object = None) -> str | None:
+        """Open an editor over the selected row's received figure."""
+        order_id = self._selected_id()
+        if order_id is None:
+            return None
+        self._cancel_edit()
+        box = self.tree.bbox(str(order_id), "progress")
+        if not box:
+            return None
+        x, y, width, height = box
+        try:
+            order = self.tracker.get_order(order_id)
+        except TrackerError:
+            return None
+        self.var_got.set(format_qty(order.quantity_received))
+        editor = ttk.Entry(self.tree, textvariable=self.var_got,
+                           style="Cell.TEntry", font=self.font_figures)
+        editor.place(x=x + 4, y=y + 3, width=76, height=height - 6)
+        editor.focus_set()
+        editor.select_range(0, "end")
+        self._editor = editor
+        self._edit_geometry = (x + 4, y + 3, 76, height - 6)
+        editor.bind("<Return>", lambda _e: self.update_received())
+        editor.bind("<Escape>", lambda _e: self._cancel_edit())
+        return "break"
+
+    def _cancel_edit(self) -> None:
+        if self._row_error is not None:
+            self._row_error.destroy()
+            self._row_error = None
+        if self._editor is not None:
+            self._editor.destroy()
+            self._editor = None
+
+    def _reject_edit(self, message: str) -> None:
+        """Keep the editor open, on the row, with the reason beside it."""
+        if self._editor is None:
+            self.var_error.set(message)
+            return
+        x, y, width, height = self._edit_geometry
+        self._editor.configure(style="Bad.TEntry")
+        if self._row_error is None:
+            self._row_error = ttk.Label(self.tree, style="RowErr.TLabel")
+        self._row_error.configure(text=f"  {message}")
+        self._row_error.place(x=x + width + 8, y=y, height=height)
+        self._editor.focus_set()
+        self._editor.select_range(0, "end")
 
     def update_received(self) -> None:
+        """Commit the received figure for the selected row.
+
+        Works whether the inline editor is open or the value was set
+        programmatically through ``var_got``.
+        """
         order_id = self._selected_id()
         if order_id is None:
             self.var_error.set("Select a purchaser on the list first.")
@@ -1027,9 +1215,14 @@ class SalesApp(tk.Tk):
         try:
             order = self.tracker.set_received(order_id, self.var_got.get())
         except TrackerError as exc:
-            self.var_error.set(str(exc))
+            self._reject_edit(str(exc))
             return
         self.var_error.set("")
+        self._cancel_edit()
+        self._flash(
+            f"{order.purchaser} — recorded {format_qty(order.quantity_received)} "
+            f"of {format_qty(order.quantity_ordered)}"
+        )
         self.refresh(select_id=order.id)
 
     def mark_all_received(self) -> None:
@@ -1041,20 +1234,30 @@ class SalesApp(tk.Tk):
         except TrackerError as exc:
             self.var_error.set(str(exc))
             return
+        self._cancel_edit()
+        self._flash(f"{order.purchaser} — marked fully received")
         self.refresh(select_id=order.id)
+
+    # ------------------------------------------------------------------ render
+
+    @classmethod
+    def _bar(cls, received: Decimal, ordered: Decimal) -> str:
+        """Fixed-width progress bar. Block glyphs share one advance width."""
+        if ordered <= 0:
+            return cls.BAR_EMPTY * cls.BAR_CELLS
+        filled = int((received / ordered) * cls.BAR_CELLS)
+        filled = max(0, min(cls.BAR_CELLS, filled))
+        if filled == 0 and received > 0:
+            filled = 1
+        return cls.BAR_FULL * filled + cls.BAR_EMPTY * (cls.BAR_CELLS - filled)
 
     def refresh(
         self,
         select_id: int | None = None,
         select_product: str | None = None,
     ) -> None:
+        self._cancel_edit()
         products = self._reload_products(select_product)
-        if products:
-            names = ", ".join(product.name for product in products[:3])
-            extra = "" if len(products) <= 3 else f" +{len(products) - 3}"
-            self.var_headline.set(names + extra)
-        else:
-            self.var_headline.set("Establish a product")
 
         search = self.var_search.get().strip() or None
         status = self.var_filter.get() or "all"
@@ -1066,33 +1269,34 @@ class SalesApp(tk.Tk):
 
         keep = select_id if select_id is not None else self._selected_id()
         self.tree.delete(*self.tree.get_children())
-        for index, order in enumerate(orders):
-            if order.fulfilled:
-                tag = "done"
-                remaining = "—"
-                status_text = "received"
-            else:
-                tag = "even" if index % 2 == 0 else "odd"
-                remaining = format_qty(order.remaining)
-                status_text = "outstanding"
+        for order in orders:
+            done = order.fulfilled
             self.tree.insert(
-                "",
-                "end",
-                iid=str(order.id),
+                "", "end", iid=str(order.id),
                 values=(
                     order.purchaser,
                     order.product_name,
-                    f"{format_qty(order.quantity_received)} / {format_qty(order.quantity_ordered)}",
-                    remaining,
-                    status_text,
+                    f"{self._bar(order.quantity_received, order.quantity_ordered)}  "
+                    f"{format_qty(order.quantity_received)} / "
+                    f"{format_qty(order.quantity_ordered)}",
+                    "—" if done else format_qty(order.remaining),
+                    "received" if done else "outstanding",
+                    order.payment_method,
                 ),
-                tags=(tag,),
+                tags=("done",) if done else (),
             )
 
         if orders:
             self.empty_label.place_forget()
         else:
-            self.empty_label.place(relx=0.5, rely=0.45, anchor="center")
+            if not products:
+                text = "No products yet. Establish one above to get started."
+            elif search or status != "all":
+                text = "Nothing matches this filter."
+            else:
+                text = "No orders yet. Log a purchaser above."
+            self.empty_label.configure(text=text)
+            self.empty_label.place(relx=0.5, rely=0.42, anchor="center")
 
         if keep is not None and self.tree.exists(str(keep)):
             self.tree.selection_set(str(keep))
@@ -1100,24 +1304,30 @@ class SalesApp(tk.Tk):
             self._on_select()
         elif not orders:
             self.selected_order_id = None
-            self.var_detail.set("Select a name to update what they have received.")
             self.var_got.set("")
-            self.progress["value"] = 0
 
         summary = self.tracker.summary()
-        self.var_due.set(format_qty(summary.units_remaining))
         self.var_count.set(str(summary.order_count))
         self.var_outstanding.set(str(summary.outstanding_count))
         self.var_received.set(str(summary.received_count))
+        self.var_due.set(format_qty(summary.units_remaining))
         if products:
-            first = products[0]
+            names = ", ".join(product.name for product in products[:3])
+            extra = "" if len(products) <= 3 else f" +{len(products) - 3}"
             self.var_meta.set(
-                f"{summary.outstanding_count} outstanding  ·  "
-                f"{format_qty(summary.units_remaining)} {first.unit} still due  ·  "
-                f"{format_money(summary.revenue)} ordered"
+                f"{names}{extra}  ·  {format_money(summary.revenue)} ordered"
             )
         else:
             self.var_meta.set("Nothing to sell yet")
+
+    def destroy(self) -> None:
+        if self._flash_job is not None:
+            try:
+                self.after_cancel(self._flash_job)
+            except tk.TclError:
+                pass
+            self._flash_job = None
+        super().destroy()
 
     def _on_close(self) -> None:
         self.tracker.close()

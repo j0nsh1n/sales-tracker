@@ -17,10 +17,27 @@ python3 sales_tracker.py product --name Honey --unit jar --price 12.50
 python3 sales_tracker.py order --buyer Jim --qty 10
 python3 sales_tracker.py receive 1 --got 5
 python3 sales_tracker.py list
+python3 sales_tracker.py order --buyer Ann --qty 4 --method venmo
+python3 sales_tracker.py money
+python3 sales_tracker.py money --count --n20 3 --n10 1 --n5 1
+python3 sales_tracker.py export --out sales.csv
+python3 sales_tracker.py pay 2 cash
 python3 sales_tracker.py delete order 1 --yes
 python3 sales_tracker.py delete product 1 --yes
 python3 sales_tracker.py reset --orders --yes
 ```
+
+Every order records how it was paid — `cash`, `venmo`, or `other`. Only cash
+counts toward the drawer.
+
+**Money** (button in the header, or `money` on the CLI) shows what you should
+have: cash collected, cash still to collect, and the same for non-cash. You
+count your own bills and type in how many of each you hold; the app totals
+them and tells you whether you are balanced, over, or short against *cash
+collected only*. Bill counts are never saved — the point is that the two
+figures are reached independently.
+
+**Export CSV** writes every order as a row, followed by a totals block.
 
 Rows are never removed from the main list. Deleting one order or one product
 happens in Settings (GUI) or the Settings menu / `delete` command (CLI). A
