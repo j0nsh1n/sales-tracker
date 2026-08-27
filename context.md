@@ -85,20 +85,20 @@ Product 1---* Order
 
 ## Session Handoff
 - **Date:** 2026-08-26
-- **Branch:** fix/windows-frozen-launch
-- **Done:** Packaged Windows exe launches again. Bumped PyInstaller to
-  6.22.2 and stopped reading `sys.stdout` at import time in
-  `salestracker/cli.py`; either fault alone kept the exe dead. Added
-  `tools/smoke_test.py`, two guards in `FrozenLaunchGuardTests`, and a
-  smoke step to both CI build jobs. Nothing pushed.
-  Also fixed the Windows-only tearDown error in `SalesTrackerTests` and
-  updated the spec.md pin (human approved).
-- **Verified:** smoke test passes on the fixed exe and fails on a build
-  with either fault reintroduced; the guards fail on the old cli.py.
-  Suite is 52 tests, green on Windows. The Linux and Wine paths of the
-  smoke test are written but unrun here (Windows machine).
-- **Open:** Linux and Wine smoke paths still need a real run. Coins not
-  handled. Extra payment methods (zelle/card) need a spec line.
-  `docs/GROK-TASKS.md` is a spent handoff. History still holds 30 MB of
-  old binaries.
-- **Next:** Confirm the Linux ELF smoke step passes on the first CI run.
+- **Branch:** fix/smoke-test-relative-path
+- **Done:** Local caught up to `origin/main` (fast-forward, 15 commits) and
+  the `v0.1.0` tag fetched. Installed the pinned PyInstaller 6.22.2 and
+  rebuilt the Linux ELF; it collects Tcl/Tk data and passes the smoke test
+  with a real visible window.
+  Fixed `tools/smoke_test.py`: it was handed a relative path by CI while
+  `launch()` sets cwd to the binary's directory, so on POSIX the path
+  resolved twice and the linux-elf job failed on every run, blocking
+  "Attach ELF to GitHub Release". Windows resolves the image against the
+  parent cwd, which is why only that one job was red.
+- **Verified:** reproduced CI's exact invocation locally (exit 1), fixed,
+  then all three invocation forms reach "PASS: visible window". 52 tests.
+- **State of the remote:** `v0.1.0` points at 38ef535, which predates the
+  Windows launch fix, so the exe published there does not start. Its
+  release notes should point users at 0.1.1.
+- **Next:** merge this branch, confirm main is green, then tag v0.1.1 so
+  the tag build attaches a working exe and the Linux ELF.
