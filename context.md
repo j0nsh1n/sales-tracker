@@ -43,6 +43,8 @@ Product 1---* Order
 - **Product:** id, name, unit, unit_price (Decimal TEXT), sku, notes, created_at
 - **Order:** id, product_id, purchaser, quantity_ordered, quantity_received
   (default 0), created_at, updated_at
+- **Setting:** key, value — operator preferences (currently `theme`), not
+  ledger data and not cleared by either reset
 - Line total is computed: ordered × unit_price
 - Fulfilled when received >= ordered; the row stays
 - Deleting happens only in Settings: `delete_order()`, `delete_product()`
@@ -98,20 +100,24 @@ Product 1---* Order
   headless runners.
 
 ## Session Handoff
-- **Date:** 2026-08-26
+- **Date:** 2026-08-27
 - **Branch:** fix/gui-scrolling-labels-centering (stacked on
   fix/windows-frozen-launch, which is pushed and awaiting its PR)
 - **Done:** Money page could not reach its own content and Settings
   scrolled two things at once; dialogs opened at +0+0 instead of over the
   main window; payment methods were shown lowercase. All three fixed and
-  pinned by tests that fail on the old code. Then added dark mode:
+  pinned by tests that fail on the old code. Added dark mode:
   `salestracker/ui/theme.py`, an Appearance control in Settings, schema
   v3 `settings` table, and a 4s poll so System follows the desktop live.
+  spec.md updated with human approval (Appearance, lowercase-storage
+  rule, settings table, schema 3, new components, acceptance criteria).
+  Cut as 0.1.2 in CHANGELOG.
 - **Verified:** 78 tests green on Windows. Dark mode checked by screenshot
-  as well as by test; the readonly comboboxes needed a state map before
-  they stopped rendering light grey.
-- **Open:** spec.md drift — it does not mention the theme setting or
-  schema v3, and needs a human decision. Linux and Wine smoke paths still
-  unrun. Coins not handled. Extra payment methods (zelle/card) need a
-  spec line. History still holds 30 MB of old binaries.
-- **Next:** Merge the two PRs in order, then tag v0.1.1.
+  of both the source run and the packaged exe; the readonly comboboxes
+  needed a state map before they stopped rendering light grey. Rebuilt
+  exe passes `tools/smoke_test.py`.
+- **Open:** Linux and Wine smoke paths still unrun. Coins not handled.
+  Extra payment methods (zelle/card) need a spec line. History still
+  holds 30 MB of old binaries.
+- **Next:** Merge the two PRs in order, tag v0.1.1 for the launch fix,
+  then v0.1.2 for this work.
