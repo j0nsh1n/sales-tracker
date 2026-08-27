@@ -98,6 +98,15 @@ def format_qty(quantity: Decimal) -> str:
     return text or "0"
 
 
+def format_payment_method(method: str) -> str:
+    """Payment method as it should be shown to a person.
+
+    Display only. The stored value and the CSV column stay lowercase, because
+    those are the contract the CLI takes on input and round-trips.
+    """
+    return str(method or "").strip().capitalize()
+
+
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 

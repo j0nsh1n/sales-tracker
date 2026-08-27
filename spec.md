@@ -55,6 +55,14 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
   ledger figure and the drawer count must be arrived at independently or
   the comparison proves nothing.
 - **Export:** one CSV containing every order as a row plus a totals block.
+- **Appearance:** the desktop ledger offers Light, Dark, and System in
+  Settings. System is the default and tracks the desktop while the app is
+  running, not only at launch. The choice persists in the `settings` table
+  and survives a reset. Where the operating system cannot be asked, the
+  app falls back to Light rather than failing to start.
+- **Payment methods are stored lowercase** (`cash`, `venmo`, `other`) and
+  capitalized only for display. The CSV column and the words the CLI
+  accepts are the stored form, so `order --method venmo` keeps working.
 - **Empty states** when there are no products or no orders. Invalid input
   fails closed: no partial row is written.
 - **Money:** optional. Stored as `decimal.Decimal` quantized to 0.01,
@@ -74,8 +82,8 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
 - GUI: product wizard on first run if the catalog is empty; order ticket
   (purchaser + quantity); list with received/ordered; a separate
   received-so-far box for the selected row; Settings in the Ledger menu
-  and header. Settings holds the order and product delete pickers behind a
-  typed `RESET` unlock.
+  and header. Settings holds the Appearance choice, and the order and
+  product delete pickers behind a typed `RESET` unlock.
 - CLI interactive session asks one question at a time for product setup,
   logging, and received-so-far updates.
 - Example: establish Honey (jar, $12.50) → log Jim bought 10 → enter 5 in
@@ -105,9 +113,11 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
   - `sales_tracker.py` — `SalesTracker`, product/order schema, interactive
     CLI and flag CLI
   - `gui.py` — Tkinter ledger (product wizard, list, received box, Settings)
+  - `salestracker/ui/theme.py` — light/dark palettes and OS theme detection
   - `test_sales_tracker.py` — unittest (library, CLI, interactive session,
     GUI smoke)
   - `SalesTracker.spec` / `requirements-build.txt` — frozen GUI packaging
+  - `tools/smoke_test.py` — launches a frozen build and requires a window
 - Data model:
 
   ```
@@ -117,8 +127,13 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
   - **Product:** id, name, unit, unit_price, sku, notes, created_at
   - **Order:** id, product_id, purchaser, quantity_ordered,
     quantity_received, created_at, updated_at, payment_method
+  - **Setting:** key, value — operator preferences, not ledger data. Not
+    touched by either reset; "reset everything" means products and orders.
 - If a legacy `sales` table is present, migrate it into products + orders
   (received starts at 0) and drop `sales`.
+- Schema version lives in `PRAGMA user_version` and is currently **3**:
+  v1 products + orders, v2 `orders.payment_method`, v3 the `settings`
+  table. A database newer than the code is refused rather than opened.
 - External APIs/services: **none**. No Stripe, Shopify, email, or LLM.
 
 ## Security & Privacy
@@ -172,6 +187,13 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
       balanced / over / short
 - [x] Bill counts are never persisted
 - [x] Export writes one CSV of order rows plus a totals block
+- [x] Appearance offers Light, Dark, and System; System follows the
+      desktop while the app runs and the choice survives a restart
+- [x] Payment methods are capitalized on screen only; the stored value,
+      the CSV column, and the CLI's accepted input stay lowercase
+- [x] Every dialog opens over the main window, and any dialog whose
+      content is taller than its window can be scrolled to the end
+- [x] A packaged build opens a real window (`tools/smoke_test.py`)
 - [x] `python3 -m unittest test_sales_tracker.py` exits 0
 - [ ] CHANGELOG.md updated for later user-visible releases
 

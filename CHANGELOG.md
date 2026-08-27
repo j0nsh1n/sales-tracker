@@ -81,6 +81,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A tracker whose startup failed kept the database write-locked for the rest
   of the process.
 
+## [0.1.2] - 2026-08-27
+
+### Added
+- Dark mode. Appearance in Settings offers System, Light, and Dark.
+  System is the default: it matches your desktop at launch and keeps
+  following it while the app is open, so switching Windows to dark
+  repaints the ledger without a restart. The choice is stored in
+  `sales.db` and is left alone by "reset everything", which is about
+  products and orders.
+
+### Fixed
+- The Money page cut off its verdict line and Close button and had no way
+  to scroll to them. Settings scrolled the panel and the picker list at
+  once when the wheel was over a picker, and never scrolled at all over
+  anything built after the dialog first opened. The main window clipped
+  its totals footer.
+- Dialogs opened in the corner of the screen instead of over the main
+  window.
+- "cash" and "venmo" were shown in lowercase in the Paid by column and
+  the picker. They are capitalised on screen now; the stored value, the
+  CSV column, and what the CLI accepts are unchanged.
+
 ## [0.1.1] - 2026-08-26
 
 ### Added

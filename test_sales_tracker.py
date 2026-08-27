@@ -16,6 +16,7 @@ from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
+from salestracker.ui import theme
 from salestracker.finance import (
     DENOMINATIONS,
     count_cash,
@@ -31,8 +32,10 @@ from sales_tracker import (
     application_dir,
     collect_product_answers,
     format_money,
+    format_payment_method,
     main,
     parse_money,
+    parse_payment_method,
     parse_quantity,
 )
 
@@ -166,6 +169,26 @@ class SalesTrackerTests(unittest.TestCase):
         self.assertEqual(count, 2)
         self.assertEqual(self.tracker.list_orders(), [])
         self.assertEqual(len(self.tracker.list_products()), 1)
+
+    def test_setting_round_trips_and_survives_reopen(self) -> None:
+        self.assertEqual(self.tracker.get_setting("theme", "system"), "system")
+        self.tracker.set_setting("theme", "dark")
+        self.assertEqual(self.tracker.get_setting("theme"), "dark")
+        self.tracker.set_setting("theme", "light")  # upsert, not a second row
+        self.assertEqual(self.tracker.get_setting("theme"), "light")
+        self.tracker.close()
+        with SalesTracker(self.db) as reopened:
+            self.assertEqual(reopened.get_setting("theme"), "light")
+        self.tracker = SalesTracker(self.db)
+
+    def test_settings_are_not_ledger_data_and_survive_reset_all(self) -> None:
+        # "Reset everything" is about products and orders; wiping the
+        # operator's preferences is not something clearing the ledger implies.
+        self._product()
+        self.tracker.add_order(purchaser="Jim", quantity="10")
+        self.tracker.set_setting("theme", "dark")
+        self.tracker.reset_all()
+        self.assertEqual(self.tracker.get_setting("theme"), "dark")
 
     def test_reset_all(self) -> None:
         self._product()
@@ -845,6 +868,336 @@ class FrozenLaunchGuardTests(unittest.TestCase):
             0,
             "importing the GUI with no console streams failed: " + detail,
         )
+
+
+class PaymentMethodDisplayTests(unittest.TestCase):
+    """Methods read as words on screen but stay lowercase in the ledger."""
+
+    def test_capitalizes_each_known_method(self) -> None:
+        self.assertEqual(
+            [format_payment_method(m) for m in PAYMENT_METHODS],
+            ["Cash", "Venmo", "Other"],
+        )
+
+    def test_tolerates_blank_and_odd_input(self) -> None:
+        self.assertEqual(format_payment_method(""), "")
+        self.assertEqual(format_payment_method("  venmo  "), "Venmo")
+        self.assertEqual(format_payment_method("VENMO"), "Venmo")
+
+    def test_display_form_is_accepted_back_as_a_value(self) -> None:
+        # The GUI combobox hands back what it shows, so the display form has
+        # to survive a round trip through the parser.
+        for method in PAYMENT_METHODS:
+            with self.subTest(method=method):
+                shown = format_payment_method(method)
+                self.assertEqual(parse_payment_method(shown), method)
+
+
+@unittest.skipUnless(HAVE_TK, "no display available for tkinter")
+class GuiPresentationTests(unittest.TestCase):
+    """Dialog placement, wheel routing, and payment-method labelling."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db = str(Path(self.tmp.name) / "sales.db")
+        from gui import SalesApp
+
+        self.app = SalesApp(self.db, auto_setup=False)
+        self.addCleanup(self.app.destroy)
+        self.addCleanup(self.app.tracker.close)
+        self.app.tracker.add_product(name="Honey", unit="jar", unit_price="12.50")
+        self.app.refresh()
+        self.app.update_idletasks()
+
+    def _log(self, purchaser: str, shown_method: str) -> None:
+        self.app.var_purchaser.set(purchaser)
+        self.app.var_qty.set("4")
+        self.app.var_method.set(shown_method)
+        self.app.log_order()
+        self.app.update_idletasks()
+
+    def test_method_picker_offers_capitalized_labels(self) -> None:
+        self.assertEqual(
+            list(self.app.method_combo["values"]), ["Cash", "Venmo", "Other"]
+        )
+
+    def test_picking_a_label_stores_the_lowercase_value(self) -> None:
+        self._log("Ann", "Venmo")
+        self.assertEqual(self.app.var_error.get(), "")
+        stored = [o.payment_method for o in self.app.tracker.list_orders()]
+        self.assertEqual(stored, ["venmo"])
+
+    def test_list_shows_the_capitalized_label(self) -> None:
+        self._log("Ann", "Venmo")
+        rows = self.app.tree.get_children()
+        self.assertEqual(self.app.tree.item(rows[0], "values")[-1], "Venmo")
+
+    def test_export_keeps_the_lowercase_value(self) -> None:
+        # The CSV is data the CLI round-trips, so it must not be prettified.
+        self._log("Ann", "Venmo")
+        target = Path(self.tmp.name) / "out.csv"
+        self.app.tracker.export_csv(target)
+        body = target.read_text(encoding="utf-8")
+        self.assertIn("venmo", body)
+        self.assertNotIn("Venmo", body)
+
+    def _dialog_is_over_parent(self, dialog) -> bool:
+        dialog.update_idletasks()
+        self.app.update_idletasks()
+        dx = abs(
+            (dialog.winfo_rootx() + dialog.winfo_width() // 2)
+            - (self.app.winfo_rootx() + self.app.winfo_width() // 2)
+        )
+        dy = abs(
+            (dialog.winfo_rooty() + dialog.winfo_height() // 2)
+            - (self.app.winfo_rooty() + self.app.winfo_height() // 2)
+        )
+        # Allowance covers the window border and title bar, which winfo_root*
+        # does not include.
+        return dx <= 60 and dy <= 60
+
+    def test_dialogs_open_centered_on_the_main_window(self) -> None:
+        from gui import MoneyDialog, ProductWizard, SettingsDialog
+
+        for factory in (
+            lambda: ProductWizard(self.app, self.app.tracker, lambda: None),
+            lambda: SettingsDialog(self.app, self.app.tracker, lambda: None),
+            lambda: MoneyDialog(self.app, self.app.tracker),
+        ):
+            dialog = factory()
+            dialog.update_idletasks()
+            with self.subTest(dialog=type(dialog).__name__):
+                centered = self._dialog_is_over_parent(dialog)
+                geometry = dialog.winfo_geometry()
+                dialog.destroy()
+                self.assertTrue(
+                    centered,
+                    "dialog did not open over the main window: " + geometry,
+                )
+
+    def test_scrolling_dialogs_can_reach_all_their_content(self) -> None:
+        from gui import MoneyDialog, SettingsDialog
+
+        for factory in (
+            lambda: SettingsDialog(self.app, self.app.tracker, lambda: None),
+            lambda: MoneyDialog(self.app, self.app.tracker),
+        ):
+            dialog = factory()
+            dialog.update_idletasks()
+            canvas = self._find_canvas(dialog)
+            with self.subTest(dialog=type(dialog).__name__):
+                self.assertIsNotNone(canvas, "dialog has no scrolling body")
+                region = canvas.cget("scrollregion")
+                wheel_bound = bool(dialog.bind("<MouseWheel>"))
+                dialog.destroy()
+                self.assertTrue(region, "scrollregion was never set")
+                self.assertTrue(
+                    wheel_bound,
+                    "the wheel is not bound on the toplevel, so children "
+                    "added later would not scroll",
+                )
+
+    def test_wheel_is_not_bound_onto_widgets_that_scroll_themselves(self) -> None:
+        # Binding the panel's handler onto a Treeview moved both the tree and
+        # the panel behind it on one flick.
+        from gui import SettingsDialog
+
+        from tkinter import ttk
+
+        dialog = SettingsDialog(self.app, self.app.tracker, lambda: None)
+        dialog.update_idletasks()
+        offenders = []
+        stack = list(dialog.winfo_children())
+        while stack:
+            widget = stack.pop()
+            if isinstance(widget, ttk.Treeview) and widget.bind("<MouseWheel>"):
+                offenders.append(str(widget))
+            stack.extend(widget.winfo_children())
+        dialog.destroy()
+        self.assertEqual(offenders, [])
+
+    @staticmethod
+    def _find_canvas(widget):
+        import tkinter as tk
+
+        stack = list(widget.winfo_children())
+        while stack:
+            child = stack.pop()
+            if isinstance(child, tk.Canvas):
+                return child
+            stack.extend(child.winfo_children())
+        return None
+
+
+class ThemeTests(unittest.TestCase):
+    """Palette bookkeeping and how a stored choice becomes a palette."""
+
+    def test_both_palettes_define_the_same_tokens(self) -> None:
+        # A token missing from one palette is a crash the moment someone
+        # switches theme, not a visual glitch.
+        self.assertEqual(
+            set(theme.PALETTES[theme.LIGHT]),
+            set(theme.PALETTES[theme.DARK]),
+        )
+
+    def test_every_token_is_a_hex_colour(self) -> None:
+        for name, palette in theme.PALETTES.items():
+            for token, value in palette.items():
+                with self.subTest(theme=name, token=token):
+                    self.assertRegex(value, r"^#[0-9A-Fa-f]{6}$")
+
+    def test_light_and_dark_actually_differ(self) -> None:
+        self.assertNotEqual(
+            theme.PALETTES[theme.LIGHT]["BG"], theme.PALETTES[theme.DARK]["BG"]
+        )
+
+    def test_unknown_choices_fall_back_to_system(self) -> None:
+        for value in ("", None, "puce", "  "):
+            with self.subTest(value=value):
+                self.assertEqual(theme.normalize_choice(value), theme.SYSTEM)
+
+    def test_choices_are_case_and_space_insensitive(self) -> None:
+        self.assertEqual(theme.normalize_choice("  Dark "), theme.DARK)
+
+    def test_explicit_choices_ignore_the_desktop(self) -> None:
+        with patch.object(theme, "detect_os_theme", return_value=theme.DARK):
+            self.assertEqual(theme.resolve(theme.LIGHT), theme.LIGHT)
+        with patch.object(theme, "detect_os_theme", return_value=theme.LIGHT):
+            self.assertEqual(theme.resolve(theme.DARK), theme.DARK)
+
+    def test_system_follows_the_desktop(self) -> None:
+        for reported in (theme.LIGHT, theme.DARK):
+            with self.subTest(reported=reported):
+                with patch.object(theme, "detect_os_theme", return_value=reported):
+                    self.assertEqual(theme.resolve(theme.SYSTEM), reported)
+
+    def test_detection_never_raises(self) -> None:
+        # It shells out on some platforms; a missing tool must not take the
+        # app down on startup.
+        self.assertIn(theme.detect_os_theme(), (theme.LIGHT, theme.DARK))
+
+
+@unittest.skipUnless(HAVE_TK, "no display available for tkinter")
+class GuiThemeTests(unittest.TestCase):
+    """The appearance choice is remembered and repaints the running window."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db = str(Path(self.tmp.name) / "sales.db")
+
+    def _app(self):
+        from gui import SalesApp
+
+        app = SalesApp(self.db, auto_setup=False)
+        # A test may shut the window itself to reopen it; tearing down twice
+        # is not an error worth failing on.
+        self.addCleanup(self._quietly, app.destroy)
+        self.addCleanup(self._quietly, app.tracker.close)
+        app.update_idletasks()
+        return app
+
+    @staticmethod
+    def _quietly(action) -> None:
+        try:
+            action()
+        except Exception:
+            pass
+
+    def test_defaults_to_system_on_a_fresh_ledger(self) -> None:
+        app = self._app()
+        self.assertEqual(app.theme_choice, theme.SYSTEM)
+        self.assertIn(app.theme_painted, (theme.LIGHT, theme.DARK))
+
+    def test_choice_is_remembered_across_restarts(self) -> None:
+        app = self._app()
+        app.set_theme(theme.DARK)
+        self.assertEqual(app.tracker.get_setting("theme"), theme.DARK)
+        app.tracker.close()
+        app.destroy()
+
+        reopened = self._app()
+        self.assertEqual(reopened.theme_choice, theme.DARK)
+        self.assertEqual(reopened.theme_painted, theme.DARK)
+
+    def test_switching_repaints_the_window_and_the_module_palette(self) -> None:
+        # The palette lives on the implementation module, not the shim.
+        from salestracker.ui import gui as gui_module
+
+        app = self._app()
+        app.set_theme(theme.DARK)
+        app.update_idletasks()
+        self.assertEqual(gui_module.BG, theme.PALETTES[theme.DARK]["BG"])
+        self.assertEqual(app.cget("bg"), theme.PALETTES[theme.DARK]["BG"])
+
+        app.set_theme(theme.LIGHT)
+        app.update_idletasks()
+        self.assertEqual(gui_module.BG, theme.PALETTES[theme.LIGHT]["BG"])
+        self.assertEqual(app.cget("bg"), theme.PALETTES[theme.LIGHT]["BG"])
+
+    def test_open_dialogs_repaint_too(self) -> None:
+        from gui import SettingsDialog
+
+        app = self._app()
+        app.set_theme(theme.LIGHT)
+        dialog = SettingsDialog(app, app.tracker, lambda: None)
+        dialog.update_idletasks()
+        self.assertEqual(dialog.cget("bg"), theme.PALETTES[theme.LIGHT]["PANEL"])
+
+        app.set_theme(theme.DARK)
+        app.update_idletasks()
+        dialog.update_idletasks()
+        panel = theme.PALETTES[theme.DARK]["PANEL"]
+        canvases = [c.cget("bg") for c in gui_canvases(dialog)]
+        dialog_bg = dialog.cget("bg")
+        dialog.destroy()
+        self.assertEqual(dialog_bg, panel)
+        self.assertEqual(canvases, [panel])
+
+    def test_settings_offers_every_choice(self) -> None:
+        from gui import SettingsDialog
+
+        app = self._app()
+        dialog = SettingsDialog(app, app.tracker, lambda: None)
+        dialog.update_idletasks()
+        labels = collect_radio_labels(dialog)
+        dialog.destroy()
+        self.assertEqual(labels, ["System", "Light", "Dark"])
+
+    def test_choosing_in_settings_applies_it(self) -> None:
+        from gui import SettingsDialog
+
+        app = self._app()
+        dialog = SettingsDialog(app, app.tracker, lambda: None)
+        dialog.var_theme.set(theme.DARK)
+        dialog._change_theme()
+        app.update_idletasks()
+        dialog.destroy()
+        self.assertEqual(app.theme_choice, theme.DARK)
+        self.assertEqual(app.tracker.get_setting("theme"), theme.DARK)
+
+
+def gui_canvases(widget):
+    from salestracker.ui import gui as gui_module
+
+    return gui_module._descendant_canvases(widget)
+
+
+def collect_radio_labels(widget):
+    from tkinter import ttk as _ttk
+
+    found = []
+    stack = [widget]
+    while stack:
+        node = stack.pop(0)
+        for child in node.winfo_children():
+            if isinstance(child, _ttk.Radiobutton):
+                text = str(child.cget("text"))
+                if text in ("System", "Light", "Dark"):
+                    found.append(text)
+            stack.append(child)
+    return found
 
 
 if __name__ == "__main__":

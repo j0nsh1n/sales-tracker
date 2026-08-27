@@ -25,7 +25,7 @@ from salestracker.models import (
     parse_quantity,
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class SalesTracker:
@@ -68,6 +68,7 @@ class SalesTracker:
         migrations = (
             (1, self._migrate_to_v1),
             (2, self._migrate_to_v2),
+            (3, self._migrate_to_v3),
         )
         for target, migrator in migrations:
             if version >= target:
@@ -120,6 +121,17 @@ class SalesTracker:
                 "ALTER TABLE orders ADD COLUMN payment_method TEXT NOT NULL "
                 f"DEFAULT '{CASH}'"
             )
+
+    def _migrate_to_v3(self) -> None:
+        """A place for operator preferences that are not ledger data."""
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
 
     def _migrate_legacy_sales(self) -> None:
         tables = {
@@ -498,12 +510,34 @@ class SalesTracker:
         return int(count)
 
     def reset_all(self) -> None:
+        # Settings are deliberately left alone: the spec's "reset everything"
+        # is about products and orders, and wiping the operator's preferences
+        # is not something they asked for by clearing the ledger.
         self._conn.execute("DELETE FROM orders")
         self._conn.execute("DELETE FROM products")
         self._conn.execute(
             "DELETE FROM sqlite_sequence WHERE name IN ('orders', 'products')"
         )
         self._conn.commit()
+
+    # -------------------------------------------------------------- settings
+
+    def get_setting(self, key: str, default: str = "") -> str:
+        """Read an operator preference. Missing keys return the default."""
+        row = self._conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (str(key),)
+        ).fetchone()
+        return default if row is None else str(row["value"])
+
+    def set_setting(self, key: str, value: str) -> str:
+        stored = str(value)
+        self._conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (str(key), stored),
+        )
+        self._conn.commit()
+        return stored
 
     def _validated_product(
         self,

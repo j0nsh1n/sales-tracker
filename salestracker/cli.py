@@ -18,6 +18,7 @@ from salestracker.models import (
     Summary,
     TrackerError,
     format_money,
+    format_payment_method,
     format_qty,
 )
 from salestracker.finance import DENOMINATIONS, count_cash, reconcile
@@ -269,7 +270,7 @@ class InteractiveSession:
         self.write(
             f"Logged #{order.id}: {order.purchaser} ordered "
             f"{format_qty(order.quantity_ordered)} {order.product_unit} of "
-            f"{order.product_name} by {order.payment_method} "
+            f"{order.product_name} by {format_payment_method(order.payment_method)} "
             "(0 received so far).\n"
         )
 
@@ -525,7 +526,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(
                     f"Logged #{order.id}: {order.purchaser} ordered "
                     f"{format_qty(order.quantity_ordered)} {order.product_unit} of "
-                    f"{order.product_name} ({order.payment_method})"
+                    f"{order.product_name} ({format_payment_method(order.payment_method)})"
                 )
             elif args.command == "list":
                 _print_orders(
@@ -549,7 +550,7 @@ def main(argv: list[str] | None = None) -> int:
                 order = tracker.set_payment_method(args.id, args.method)
                 print(
                     f"Order #{order.id} ({order.purchaser}) is now "
-                    f"paid by {order.payment_method}."
+                    f"paid by {format_payment_method(order.payment_method)}."
                 )
             elif args.command == "money":
                 money = tracker.financials()
