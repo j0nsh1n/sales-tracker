@@ -83,12 +83,13 @@ Product 1---* Order
 - A readonly ttk Combobox draws from its state map, not `configure`, so
   dark mode needs `style.map` and the dropdown listbox needs
   `option_add` — ttk cannot reach that listbox.
-- Wheel deltas are divided by 40.0, matching Tk 9's own `tk::MouseWheel`.
-  Dividing by 120 (one mouse notch) and truncating to an int discarded
-  every event a precision touchpad sends, so dialogs only moved from the
-  scrollbar. Tk 9 accepts a fractional `yview_scroll`; Tk 8.6 raises
-  "expected integer", so the leftover is carried in Python there instead.
-  CI's Linux Tk is the older one, which is why this only failed there.
+- Wheel handling is ours, not Tk's, on every scrollable surface:
+  `bind_wheel_scroll` on each list and one handler on each dialog
+  toplevel for its panel. Deltas divide by 40.0; Tk 9 takes the fraction,
+  Tk 8.6 raises "expected integer" so the leftover is carried in Python.
+  Tk 8.6's own bindings round sub-notch deltas to zero, which is why a
+  touchpad moved nothing on Linux even in the order list. The list
+  bindings return "break" so Tk's class binding cannot also fire.
 - Payment methods are capitalised for display only. The ledger, the CSV,
   and the CLI's accepted input all stay lowercase.
 - Linux frozen binary was built natively here; Windows exe was Wine + CI.

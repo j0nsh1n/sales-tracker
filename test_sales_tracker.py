@@ -1054,24 +1054,38 @@ class GuiPresentationTests(unittest.TestCase):
                     position, 0.0, f"a gesture of 8 events at delta {delta} moved nothing"
                 )
 
-    def test_wheel_is_not_bound_onto_widgets_that_scroll_themselves(self) -> None:
-        # Binding the panel's handler onto a Treeview moved both the tree and
-        # the panel behind it on one flick.
-        from gui import SettingsDialog
-
+    def test_wheel_over_a_picker_moves_the_picker_not_the_panel(self) -> None:
+        # One flick should move one thing. The panel's handler used to be
+        # bound onto the picker as well, so a flick over the list moved the
+        # list and the panel behind it at the same time.
         from tkinter import ttk
 
+        from gui import SettingsDialog
+
         dialog = SettingsDialog(self.app, self.app.tracker, lambda: None)
-        dialog.update_idletasks()
-        offenders = []
+        dialog.update()
+        canvas = self._find_canvas(dialog)
+        picker = None
         stack = list(dialog.winfo_children())
         while stack:
             widget = stack.pop()
-            if isinstance(widget, ttk.Treeview) and widget.bind("<MouseWheel>"):
-                offenders.append(str(widget))
+            if isinstance(widget, ttk.Treeview):
+                picker = widget
+                break
             stack.extend(widget.winfo_children())
+        self.assertIsNotNone(picker, "settings has no picker list")
+
+        canvas.yview_moveto(0)
+        dialog.update()
+        before = canvas.yview()[0]
+        for _ in range(8):
+            picker.event_generate("<MouseWheel>", delta=-40, x=10, y=10)
+            picker.update()
+        after = canvas.yview()[0]
         dialog.destroy()
-        self.assertEqual(offenders, [])
+        self.assertEqual(
+            after, before, "the panel scrolled while the pointer was on a list"
+        )
 
     @staticmethod
     def _find_canvas(widget):
