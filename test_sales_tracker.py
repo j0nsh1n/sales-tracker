@@ -1008,7 +1008,10 @@ class GuiPresentationTests(unittest.TestCase):
         for delta in deltas:
             target.yview_moveto(0)
             target.update()
-            for _ in range(3):
+            # A real gesture is many events. Enough of them here that the
+            # smallest delta still crosses a whole unit on the Tk builds that
+            # round to one, without assuming the smoother fractional path.
+            for _ in range(8):
                 target.event_generate("<MouseWheel>", delta=delta, x=50, y=50)
                 target.update()
             seen[delta] = target.yview()[0]
@@ -1032,7 +1035,7 @@ class GuiPresentationTests(unittest.TestCase):
         for delta, position in seen.items():
             with self.subTest(delta=delta):
                 self.assertGreater(
-                    position, 0.0, f"a wheel delta of {delta} moved nothing"
+                    position, 0.0, f"a gesture of 8 events at delta {delta} moved nothing"
                 )
 
     def test_touchpad_sized_wheel_deltas_scroll_the_order_list(self) -> None:
@@ -1048,7 +1051,7 @@ class GuiPresentationTests(unittest.TestCase):
         for delta, position in seen.items():
             with self.subTest(delta=delta):
                 self.assertGreater(
-                    position, 0.0, f"a wheel delta of {delta} moved nothing"
+                    position, 0.0, f"a gesture of 8 events at delta {delta} moved nothing"
                 )
 
     def test_wheel_is_not_bound_onto_widgets_that_scroll_themselves(self) -> None:

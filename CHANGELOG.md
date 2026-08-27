@@ -11,8 +11,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   scrollbar worked. One notch of a mouse wheel reports 120 and the
   handler divided by that and rounded down to a whole number, so the
   smaller amounts a precision touchpad sends were all rounded away to
-  zero. Dialogs now scroll by the fractional amount, the same way the
-  order list always has.
+  zero. Dialogs now scroll by the leftover amount, the same way the
+  order list always has, whether or not the Tk in use can scroll by
+  part of a line.
 
 ### Added
 - Project governance set: `agents.md`, `spec.md`, `roadmap.md`, `context.md`,

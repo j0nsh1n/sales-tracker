@@ -79,6 +79,19 @@ THEME_SETTING = "theme"
 WHEEL_DIVISOR = 40.0
 
 
+def _accepts_fractional_scroll(widget: tk.Misc) -> bool:
+    """Whether this Tk lets `yview scroll` take a fraction of a unit.
+
+    Tk 9 does; 8.6 raises "expected integer". Scrolling by zero is a no-op on
+    either, so this asks the question without moving anything.
+    """
+    try:
+        widget.yview_scroll(0.0, "units")
+    except tk.TclError:
+        return False
+    return True
+
+
 def _descendant_canvases(widget: tk.Misc) -> list[tk.Canvas]:
     """Every Canvas under widget. These hold a colour ttk styles cannot set."""
     found: list[tk.Canvas] = []
@@ -150,16 +163,35 @@ def scrollable_body(window: tk.Toplevel) -> ttk.Frame:
             widget = getattr(widget, "master", None)
         return False
 
+    # Tk 9 takes a fractional scroll amount and accumulates it itself, which
+    # is the smoother result. Tk 8.6 rejects anything but an integer, so there
+    # the leftover is carried here instead and spent once it reaches a whole
+    # unit. Either way a small delta is never simply discarded.
+    smooth = _accepts_fractional_scroll(canvas)
+    carry = 0.0
+
     def _wheel(event: tk.Event) -> None:
+        nonlocal carry
         if _owns_scroll(getattr(event, "widget", None)):
             return
         delta = getattr(event, "delta", 0)
+        num = getattr(event, "num", None)
         if delta:
-            canvas.yview_scroll(-delta / WHEEL_DIVISOR, "units")
-        elif getattr(event, "num", None) == 4:
-            canvas.yview_scroll(-1, "units")
-        elif getattr(event, "num", None) == 5:
-            canvas.yview_scroll(1, "units")
+            amount = -delta / WHEEL_DIVISOR
+        elif num == 4:
+            amount = -1.0
+        elif num == 5:
+            amount = 1.0
+        else:
+            return
+        if smooth:
+            canvas.yview_scroll(amount, "units")
+            return
+        carry += amount
+        units = int(carry)
+        if units:
+            carry -= units
+            canvas.yview_scroll(units, "units")
 
     for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
         window.bind(sequence, _wheel)
