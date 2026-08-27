@@ -232,7 +232,7 @@ def launch(binary: Path, db_path: Path, use_wine: bool) -> subprocess.Popen:
     return subprocess.Popen(command, **kwargs)
 
 
-def terminate(process: subprocess.Popen, use_x11: bool) -> None:
+def terminate(process: subprocess.Popen, use_wine: bool) -> None:
     try:
         if os.name == "nt":
             subprocess.run(
@@ -247,9 +247,11 @@ def terminate(process: subprocess.Popen, use_x11: bool) -> None:
                 process.kill()
     except OSError:
         pass
-    if use_x11:
-        # Wine leaves its server running between invocations; a stray one would
-        # let the next run see this run's window.
+    # Wine leaves its server running between invocations; a stray one would
+    # let the next run see this run's window. Only relevant when we actually
+    # launched through wine, and only if wine is installed -- a native Linux
+    # run on a machine without wine must not fail here after passing.
+    if use_wine and shutil.which("wineserver"):
         subprocess.run(["wineserver", "-k"], capture_output=True)
 
 
@@ -281,7 +283,7 @@ def run(binary: Path, want_title: str, timeout: float, use_wine: bool) -> int:
                     return 1
                 time.sleep(0.5)
         finally:
-            terminate(process, use_x11)
+            terminate(process, use_wine)
 
     print(
         "FAIL: no window titled "

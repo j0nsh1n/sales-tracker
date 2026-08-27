@@ -104,4 +104,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the harness failed before it could launch anything. The Windows job was
   unaffected because Windows resolves the program path differently. With
   the Linux job fixed, a tagged release now carries both a `.exe` and a
-  Linux binary.
+  Linux binary. The same job then failed a second time during cleanup: it
+  tried to shut down a Wine server on every Linux run, including native
+  ones, and the runner has no Wine installed. Cleanup now only does that
+  when the run actually went through Wine.
