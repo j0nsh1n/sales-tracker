@@ -34,6 +34,7 @@ from salestracker import (
     TrackerError,
     count_cash,
     format_money,
+    format_payment_method,
     format_qty,
     reconcile,
 )
@@ -55,6 +56,85 @@ ROW_ALT = SUBTLE
 FOCUS = ACCENT
 WHITE = "#FFFFFF"
 RECEIVED_BG = "#F1F7F3"
+
+# Widgets that scroll themselves. The wheel is left alone over these, so one
+# flick moves the list under the pointer instead of the list and the panel
+# behind it at the same time.
+SELF_SCROLLING = (ttk.Treeview, tk.Listbox, tk.Text)
+
+
+def center_on_parent(window: tk.Toplevel, parent: tk.Misc) -> None:
+    """Put window over the middle of parent, kept fully on screen.
+
+    Setting only a size leaves a Toplevel at +0+0, which is where every dialog
+    in this app used to open regardless of where the main window was.
+    """
+    window.update_idletasks()
+    width = window.winfo_width()
+    height = window.winfo_height()
+    if width <= 1 or height <= 1:  # not mapped yet
+        width, height = window.winfo_reqwidth(), window.winfo_reqheight()
+    x = parent.winfo_rootx() + (parent.winfo_width() - width) // 2
+    y = parent.winfo_rooty() + (parent.winfo_height() - height) // 2
+    # Clamp so a dialog taller than the screen, or a main window shoved against
+    # an edge, still opens with its title bar reachable.
+    x = max(0, min(x, window.winfo_screenwidth() - width))
+    y = max(0, min(y, window.winfo_screenheight() - height))
+    window.geometry(f"+{x}+{y}")
+
+
+def scrollable_body(window: tk.Toplevel) -> ttk.Frame:
+    """Fill window with a vertically scrolling area and return the inner frame.
+
+    The wheel is bound once on the toplevel, not on each descendant. Every
+    child carries the toplevel in its bindtags, so widgets built later scroll
+    without being registered, and nothing has to be re-bound after a reload.
+    """
+    shell = ttk.Frame(window, style="Panel.TFrame")
+    shell.pack(fill="both", expand=True)
+    canvas = tk.Canvas(shell, bg=PANEL, highlightthickness=0, borderwidth=0)
+    vsb = ttk.Scrollbar(
+        shell,
+        orient="vertical",
+        command=canvas.yview,
+        style="Ledger.Vertical.TScrollbar",
+    )
+    canvas.configure(yscrollcommand=vsb.set)
+    vsb.pack(side="right", fill="y")
+    canvas.pack(side="left", fill="both", expand=True)
+
+    body = ttk.Frame(canvas, style="Panel.TFrame", padding=24)
+    inner = canvas.create_window((0, 0), window=body, anchor="nw")
+
+    def _stretch(event: tk.Event) -> None:
+        canvas.itemconfigure(inner, width=event.width)
+
+    def _region(_event: object = None) -> None:
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    canvas.bind("<Configure>", _stretch)
+    body.bind("<Configure>", _region)
+
+    def _owns_scroll(widget: tk.Misc | None) -> bool:
+        while widget is not None and widget is not window:
+            if isinstance(widget, SELF_SCROLLING):
+                return True
+            widget = getattr(widget, "master", None)
+        return False
+
+    def _wheel(event: tk.Event) -> None:
+        if _owns_scroll(getattr(event, "widget", None)):
+            return
+        if getattr(event, "delta", 0):
+            canvas.yview_scroll(int(-event.delta / 120), "units")
+        elif getattr(event, "num", None) == 4:
+            canvas.yview_scroll(-1, "units")
+        elif getattr(event, "num", None) == 5:
+            canvas.yview_scroll(1, "units")
+
+    for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+        window.bind(sequence, _wheel)
+    return body
 
 
 class ProductWizard(tk.Toplevel):
@@ -140,6 +220,7 @@ class ProductWizard(tk.Toplevel):
         self.bind("<Escape>", lambda _e: self.destroy())
         self.protocol("WM_DELETE_WINDOW", self.destroy)
         self._show_step()
+        center_on_parent(self, master)
         self.after(50, lambda: self.entry.focus_set())
 
     def _show_step(self) -> None:
@@ -238,45 +319,7 @@ class SettingsDialog(tk.Toplevel):
         self.minsize(560, 520)
         self.geometry("640x680")
 
-        shell = ttk.Frame(self, style="Panel.TFrame")
-        shell.pack(fill="both", expand=True)
-        canvas = tk.Canvas(shell, bg=PANEL, highlightthickness=0, borderwidth=0)
-        vsb = ttk.Scrollbar(
-            shell,
-            orient="vertical",
-            command=canvas.yview,
-            style="Ledger.Vertical.TScrollbar",
-        )
-        canvas.configure(yscrollcommand=vsb.set)
-        vsb.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
-
-        pad = ttk.Frame(canvas, style="Panel.TFrame", padding=24)
-        inner = canvas.create_window((0, 0), window=pad, anchor="nw")
-
-        def _stretch(event: tk.Event) -> None:
-            canvas.itemconfigure(inner, width=event.width)
-
-        def _region(_event: object = None) -> None:
-            canvas.configure(scrollregion=canvas.bbox("all"))
-
-        canvas.bind("<Configure>", _stretch)
-        pad.bind("<Configure>", _region)
-
-        def _wheel(event: tk.Event) -> None:
-            if getattr(event, "delta", 0):
-                canvas.yview_scroll(int(-event.delta / 120), "units")
-            elif getattr(event, "num", None) == 4:
-                canvas.yview_scroll(-1, "units")
-            elif getattr(event, "num", None) == 5:
-                canvas.yview_scroll(1, "units")
-
-        def _bind_wheel(widget: tk.Misc) -> None:
-            widget.bind("<MouseWheel>", _wheel)
-            widget.bind("<Button-4>", _wheel)
-            widget.bind("<Button-5>", _wheel)
-            for child in widget.winfo_children():
-                _bind_wheel(child)
+        pad = scrollable_body(self)
 
         ttk.Label(pad, text="Settings", style="Section.TLabel").pack(anchor="w")
         ttk.Label(
@@ -356,9 +399,7 @@ class SettingsDialog(tk.Toplevel):
 
         self.bind("<Escape>", lambda _e: self.destroy())
         self._reload()
-        self.update_idletasks()
-        _bind_wheel(self)
-        _region()
+        center_on_parent(self, master)
 
     def _picker(
         self,
@@ -510,7 +551,9 @@ class MoneyDialog(tk.Toplevel):
         self.configure(bg=PANEL)
         self.transient(master)
         self.minsize(760, 560)
-        self.geometry("820x620")
+        # Tall enough for the whole page at the default font size; the
+        # scrolling body covers anything shorter.
+        self.geometry("820x720")
 
         self.money = tracker.financials()
         self.var_counts: dict[int, tk.StringVar] = {}
@@ -522,8 +565,7 @@ class MoneyDialog(tk.Toplevel):
         self.var_verdict = tk.StringVar(value="Enter your bill counts to compare.")
         self.var_note = tk.StringVar(value="")
 
-        pad = ttk.Frame(self, style="Panel.TFrame", padding=22)
-        pad.pack(fill="both", expand=True)
+        pad = scrollable_body(self)
         pad.columnconfigure(0, weight=1)
         pad.columnconfigure(1, weight=1)
         pad.rowconfigure(1, weight=1)
@@ -549,6 +591,7 @@ class MoneyDialog(tk.Toplevel):
         self.bind("<Escape>", lambda _e: self.destroy())
         self.grab_set()
         self._recount()
+        center_on_parent(self, master)
 
     # ------------------------------------------------------------- expected
 
@@ -684,7 +727,7 @@ class MoneyDialog(tk.Toplevel):
         )
         self.var_note.set(
             "" if result.balanced else
-            "Check for a mislogged quantity, an order paid by venmo but "
+            "Check for a mislogged quantity, an order paid by Venmo but "
             "recorded as cash, or change given from the drawer."
         )
 
@@ -718,7 +761,9 @@ class SalesApp(tk.Tk):
 
         self.title("Sales Tracker")
         self.minsize(940, 580)
-        self.geometry("1080x700")
+        # 700 left the footer 20px short of its natural height, so the totals
+        # row was clipped at the default size.
+        self.geometry("1080x730")
         self.configure(bg=BG)
 
         self._fonts()
@@ -848,7 +893,9 @@ class SalesApp(tk.Tk):
         self.var_product = tk.StringVar()
         self.var_qty = tk.StringVar()
         self.var_qty_label = tk.StringVar(value="HOW MANY")
-        self.var_method = tk.StringVar(value=CASH)
+        # Holds the display form ("Cash"); parse_payment_method lowercases it
+        # again on the way into the ledger.
+        self.var_method = tk.StringVar(value=format_payment_method(CASH))
         self.var_error = tk.StringVar()
         self.var_ok = tk.StringVar()
         self.var_search = tk.StringVar()
@@ -929,7 +976,8 @@ class SalesApp(tk.Tk):
         self._field_label(row, "PAID BY")
         self.method_combo = ttk.Combobox(
             self._last_box, textvariable=self.var_method, state="readonly",
-            style="Ticket.TCombobox", width=8, values=list(PAYMENT_METHODS),
+            style="Ticket.TCombobox", width=8,
+            values=[format_payment_method(m) for m in PAYMENT_METHODS],
         )
         self.method_combo.pack(anchor="w", ipady=2)
 
@@ -1120,7 +1168,7 @@ class SalesApp(tk.Tk):
                 purchaser=self.var_purchaser.get(),
                 quantity=self.var_qty.get(),
                 product=self.var_product.get() or None,
-                payment_method=self.var_method.get() or CASH,
+                payment_method=self.var_method.get().strip().lower() or CASH,
             )
         except TrackerError as exc:
             self.var_error.set(str(exc))
@@ -1281,7 +1329,7 @@ class SalesApp(tk.Tk):
                     f"{format_qty(order.quantity_ordered)}",
                     "—" if done else format_qty(order.remaining),
                     "received" if done else "outstanding",
-                    order.payment_method,
+                    format_payment_method(order.payment_method),
                 ),
                 tags=("done",) if done else (),
             )
