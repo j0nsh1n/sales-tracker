@@ -190,7 +190,7 @@ class ProductWizard(tk.Toplevel):
             return
         if key == "price":
             try:
-                from sales_tracker import parse_money
+                from salestracker import parse_money
 
                 parse_money(self.answers["price"] or "0")
             except TrackerError as exc:
