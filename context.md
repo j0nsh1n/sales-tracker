@@ -5,14 +5,13 @@
 - App is a **SQLite ledger** with two entry points: interactive CLI
   (`sales_tracker.py`) and Tkinter UI (`gui.py`). Implementation lives in
   the `salestracker` package; root files are shims.
-- Tests: `python3 -m unittest test_sales_tracker.py` — 78 tests, green on
+- Tests: `python3 -m unittest test_sales_tracker.py` — 80 tests, green on
   Windows and Linux. Packaged build: `python3 tools/smoke_test.py`.
   Lint / types: **not configured**.
 - Frozen GUI: built by CI; `v*` tags attach Windows exe and Linux ELF to
   a GitHub Release. Binaries are not tracked in git.
 - Git: `j0nsh1n/sales-tracker` (private). Working branch
-  `fix/gui-scrolling-labels-centering`, stacked on
-  `fix/windows-frozen-launch` (pushed, PR not yet opened).
+  `fix/touchpad-scrolling`; `main` is at v0.1.2.
 
 ## Repo Landmarks
 | Path | Role |
@@ -84,6 +83,13 @@ Product 1---* Order
 - A readonly ttk Combobox draws from its state map, not `configure`, so
   dark mode needs `style.map` and the dropdown listbox needs
   `option_add` — ttk cannot reach that listbox.
+- Wheel handling is ours, not Tk's, on every scrollable surface:
+  `bind_wheel_scroll` on each list and one handler on each dialog
+  toplevel for its panel. Deltas divide by 40.0; Tk 9 takes the fraction,
+  Tk 8.6 raises "expected integer" so the leftover is carried in Python.
+  Tk 8.6's own bindings round sub-notch deltas to zero, which is why a
+  touchpad moved nothing on Linux even in the order list. The list
+  bindings return "break" so Tk's class binding cannot also fire.
 - Payment methods are capitalised for display only. The ledger, the CSV,
   and the CLI's accepted input all stay lowercase.
 - Linux frozen binary was built natively here; Windows exe was Wine + CI.
@@ -101,26 +107,15 @@ Product 1---* Order
 
 ## Session Handoff
 - **Date:** 2026-08-27
-- **Branch:** fix/gui-scrolling-labels-centering (main merged in)
-- **Done:** Money page could not reach its own content and Settings
-  scrolled two things at once; dialogs opened at +0+0 instead of over the
-  main window; payment methods were shown lowercase. All three fixed and
-  pinned by tests that fail on the old code. Added dark mode:
-  `salestracker/ui/theme.py`, an Appearance control in Settings, schema
-  v3 `settings` table, and a 4s poll so System follows the desktop live.
-  spec.md updated with human approval. Cut as 0.1.2 in CHANGELOG.
-- **Verified:** 78 tests green on Windows. Dark mode checked by screenshot
-  of both the source run and the packaged exe; the readonly comboboxes
-  needed a state map before they stopped rendering light grey. Rebuilt
-  exe passes `tools/smoke_test.py`.
-- **State of the remote:** `v0.1.1` is tagged at 2625283 and is the first
-  release whose exe starts. `v0.1.0` points at 38ef535, predating the
-  launch fix, so the exe published there does not run — its release notes
-  should point users at 0.1.1. The smoke test's two Linux bugs (relative
-  path resolved twice under the child's cwd; wineserver killed on every
-  Linux run, not just wine ones) were caught by the linux-elf job and are
-  fixed on main.
-- **Open:** the Wine path of the smoke test is still unrun. Coins not
-  handled. Extra payment methods (zelle/card) need a spec line. History
-  still holds 30 MB of old binaries.
-- **Next:** merge this branch, then tag v0.1.2.
+- **Branch:** fix/touchpad-scrolling
+- **Done:** v0.1.2 released (dark mode + the scrolling, dialog placement
+  and label fixes); both binaries attached. Then fixed touchpad scrolling
+  in dialogs: the wheel handler truncated sub-notch deltas to zero.
+- **Verified:** 80 tests green on Windows. The new test fails on the old
+  arithmetic at deltas of 40, 20 and 12 and passes at 120, which is
+  exactly the reported symptom.
+- **Open:** not yet released; would be 0.1.3. The Wine path of the smoke
+  test is still unrun. `v0.1.0`'s release notes should point users at a
+  newer version, since its exe predates the launch fix. Coins not
+  handled. Extra payment methods (zelle/card) need a spec line.
+- **Next:** decide whether to cut 0.1.3.

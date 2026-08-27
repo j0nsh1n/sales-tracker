@@ -70,6 +70,78 @@ SELF_SCROLLING = (ttk.Treeview, tk.Listbox, tk.Text)
 # Key under which the appearance choice is kept in the ledger's settings table.
 THEME_SETTING = "theme"
 
+# What one wheel unit is worth, matching Tk 9's own `tk::MouseWheel` binding.
+# A classic mouse notch reports 120, but a precision touchpad sends far
+# smaller deltas: dividing by 120 and truncating to an int discarded every one
+# of them, so the dialogs only moved when dragged by the scrollbar. Tk accepts
+# a fractional amount here and accumulates it, which is how the order list has
+# always scrolled smoothly under the same fingers.
+WHEEL_DIVISOR = 40.0
+
+
+def _accepts_fractional_scroll(widget: tk.Misc) -> bool:
+    """Whether this Tk lets `yview scroll` take a fraction of a unit.
+
+    Tk 9 does; 8.6 raises "expected integer". Scrolling by zero is a no-op on
+    either, so this asks the question without moving anything.
+    """
+    try:
+        widget.yview_scroll(0.0, "units")
+    except tk.TclError:
+        return False
+    return True
+
+
+def _wheel_amount(event: tk.Event) -> float | None:
+    """Scroll units for one wheel event, or None if it carries no scroll."""
+    delta = getattr(event, "delta", 0)
+    num = getattr(event, "num", None)
+    if delta:
+        return -delta / WHEEL_DIVISOR
+    if num == 4:
+        return -1.0
+    if num == 5:
+        return 1.0
+    return None
+
+
+def make_wheel_handler(view: tk.Misc):
+    """A wheel handler for `view` that never discards a small delta.
+
+    Tk 8.6's own bindings divide by 120 and round down, so a precision
+    touchpad moves nothing at all under them. This keeps the leftover instead.
+    """
+    state: dict[str, object] = {"smooth": None, "carry": 0.0}
+
+    def handler(event: tk.Event) -> str | None:
+        amount = _wheel_amount(event)
+        if amount is None:
+            return None
+        if state["smooth"] is None:
+            state["smooth"] = _accepts_fractional_scroll(view)
+        if state["smooth"]:
+            view.yview_scroll(amount, "units")
+            return "break"
+        carry = float(state["carry"]) + amount
+        units = int(carry)
+        state["carry"] = carry - units
+        if units:
+            view.yview_scroll(units, "units")
+        return "break"
+
+    return handler
+
+
+def bind_wheel_scroll(widget: tk.Misc, view: tk.Misc | None = None) -> None:
+    """Scroll `view` when the wheel turns over `widget`.
+
+    Bound on the widget itself so it runs before Tk's class binding, and it
+    returns "break" so the two cannot both act on one event.
+    """
+    handler = make_wheel_handler(view if view is not None else widget)
+    for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+        widget.bind(sequence, handler)
+
 
 def _descendant_canvases(widget: tk.Misc) -> list[tk.Canvas]:
     """Every Canvas under widget. These hold a colour ttk styles cannot set."""
@@ -142,15 +214,14 @@ def scrollable_body(window: tk.Toplevel) -> ttk.Frame:
             widget = getattr(widget, "master", None)
         return False
 
-    def _wheel(event: tk.Event) -> None:
+    scroll_panel = make_wheel_handler(canvas)
+
+    def _wheel(event: tk.Event) -> str | None:
+        # A list inside the panel scrolls itself, through its own binding on
+        # the widget. Standing aside here keeps one flick from moving both.
         if _owns_scroll(getattr(event, "widget", None)):
-            return
-        if getattr(event, "delta", 0):
-            canvas.yview_scroll(int(-event.delta / 120), "units")
-        elif getattr(event, "num", None) == 4:
-            canvas.yview_scroll(-1, "units")
-        elif getattr(event, "num", None) == 5:
-            canvas.yview_scroll(1, "units")
+            return None
+        return scroll_panel(event)
 
     for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
         window.bind(sequence, _wheel)
@@ -482,6 +553,7 @@ class SettingsDialog(tk.Toplevel):
         tree.configure(yscrollcommand=scroll.set)
         tree.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
+        bind_wheel_scroll(tree)
         ttk.Button(parent, text=button_text, style="Danger.TButton", command=command).pack(
             fill="x", pady=(0, 16)
         )
@@ -1182,6 +1254,7 @@ class SalesApp(tk.Tk):
         scroll.grid(row=0, column=1, sticky="ns")
 
         self.tree.tag_configure("done", background=RECEIVED_BG, foreground=MUTED)
+        bind_wheel_scroll(self.tree)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.tree.bind("<Double-1>", self.begin_edit)
         self.tree.bind("<Return>", self.begin_edit)

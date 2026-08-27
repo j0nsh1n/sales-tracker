@@ -998,24 +998,94 @@ class GuiPresentationTests(unittest.TestCase):
                     "added later would not scroll",
                 )
 
-    def test_wheel_is_not_bound_onto_widgets_that_scroll_themselves(self) -> None:
-        # Binding the panel's handler onto a Treeview moved both the tree and
-        # the panel behind it on one flick.
+    def _wheel_positions(self, target, deltas):
+        """Scroll from the top with each delta and report where it ended up.
+
+        The event goes to the widget the pointer would be over, because that
+        is what decides which bindtags -- and so which handler -- see it.
+        """
+        seen = {}
+        for delta in deltas:
+            target.yview_moveto(0)
+            target.update()
+            # A real gesture is many events. Enough of them here that the
+            # smallest delta still crosses a whole unit on the Tk builds that
+            # round to one, without assuming the smoother fractional path.
+            for _ in range(8):
+                target.event_generate("<MouseWheel>", delta=delta, x=50, y=50)
+                target.update()
+            seen[delta] = target.yview()[0]
+        return seen
+
+    def test_touchpad_sized_wheel_deltas_scroll_dialogs(self) -> None:
+        # A classic mouse notch is 120; a precision touchpad sends much less
+        # per event. Dividing by 120 and truncating to an int discarded all of
+        # them, so the dialog only moved when dragged by its scrollbar.
         from gui import SettingsDialog
 
+        dialog = SettingsDialog(self.app, self.app.tracker, lambda: None)
+        dialog.update()
+        canvas = self._find_canvas(dialog)
+        self.assertIsNotNone(canvas)
+        self.assertLess(
+            canvas.yview()[1], 1.0, "dialog does not overflow, nothing to test"
+        )
+        seen = self._wheel_positions(canvas, (-120, -40, -20, -12))
+        dialog.destroy()
+        for delta, position in seen.items():
+            with self.subTest(delta=delta):
+                self.assertGreater(
+                    position, 0.0, f"a gesture of 8 events at delta {delta} moved nothing"
+                )
+
+    def test_touchpad_sized_wheel_deltas_scroll_the_order_list(self) -> None:
+        # This one rides Tk's own Treeview binding rather than ours; the test
+        # is here so a future hand-rolled binding cannot quietly regress it.
+        for i in range(60):
+            self.app.tracker.add_order(purchaser=f"Buyer {i:02d}", quantity="2")
+        self.app.refresh()
+        self.app.update()
+        tree = self.app.tree
+        self.assertLess(tree.yview()[1], 1.0, "list does not overflow")
+        seen = self._wheel_positions(tree, (-120, -40, -20, -12))
+        for delta, position in seen.items():
+            with self.subTest(delta=delta):
+                self.assertGreater(
+                    position, 0.0, f"a gesture of 8 events at delta {delta} moved nothing"
+                )
+
+    def test_wheel_over_a_picker_moves_the_picker_not_the_panel(self) -> None:
+        # One flick should move one thing. The panel's handler used to be
+        # bound onto the picker as well, so a flick over the list moved the
+        # list and the panel behind it at the same time.
         from tkinter import ttk
 
+        from gui import SettingsDialog
+
         dialog = SettingsDialog(self.app, self.app.tracker, lambda: None)
-        dialog.update_idletasks()
-        offenders = []
+        dialog.update()
+        canvas = self._find_canvas(dialog)
+        picker = None
         stack = list(dialog.winfo_children())
         while stack:
             widget = stack.pop()
-            if isinstance(widget, ttk.Treeview) and widget.bind("<MouseWheel>"):
-                offenders.append(str(widget))
+            if isinstance(widget, ttk.Treeview):
+                picker = widget
+                break
             stack.extend(widget.winfo_children())
+        self.assertIsNotNone(picker, "settings has no picker list")
+
+        canvas.yview_moveto(0)
+        dialog.update()
+        before = canvas.yview()[0]
+        for _ in range(8):
+            picker.event_generate("<MouseWheel>", delta=-40, x=10, y=10)
+            picker.update()
+        after = canvas.yview()[0]
         dialog.destroy()
-        self.assertEqual(offenders, [])
+        self.assertEqual(
+            after, before, "the panel scrolled while the pointer was on a list"
+        )
 
     @staticmethod
     def _find_canvas(widget):
