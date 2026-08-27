@@ -84,6 +84,10 @@ Product 1---* Order
 - A readonly ttk Combobox draws from its state map, not `configure`, so
   dark mode needs `style.map` and the dropdown listbox needs
   `option_add` — ttk cannot reach that listbox.
+- Wheel deltas are divided by 40.0 and passed to `yview_scroll` as a
+  fraction, matching Tk 9's own `tk::MouseWheel`. Dividing by 120 (one
+  mouse notch) and truncating to an int silently discarded every event a
+  precision touchpad sends, so dialogs only moved from the scrollbar.
 - Payment methods are capitalised for display only. The ledger, the CSV,
   and the CLI's accepted input all stay lowercase.
 - Linux frozen binary was built natively here; Windows exe was Wine + CI.
@@ -101,26 +105,15 @@ Product 1---* Order
 
 ## Session Handoff
 - **Date:** 2026-08-27
-- **Branch:** fix/gui-scrolling-labels-centering (main merged in)
-- **Done:** Money page could not reach its own content and Settings
-  scrolled two things at once; dialogs opened at +0+0 instead of over the
-  main window; payment methods were shown lowercase. All three fixed and
-  pinned by tests that fail on the old code. Added dark mode:
-  `salestracker/ui/theme.py`, an Appearance control in Settings, schema
-  v3 `settings` table, and a 4s poll so System follows the desktop live.
-  spec.md updated with human approval. Cut as 0.1.2 in CHANGELOG.
-- **Verified:** 78 tests green on Windows. Dark mode checked by screenshot
-  of both the source run and the packaged exe; the readonly comboboxes
-  needed a state map before they stopped rendering light grey. Rebuilt
-  exe passes `tools/smoke_test.py`.
-- **State of the remote:** `v0.1.1` is tagged at 2625283 and is the first
-  release whose exe starts. `v0.1.0` points at 38ef535, predating the
-  launch fix, so the exe published there does not run — its release notes
-  should point users at 0.1.1. The smoke test's two Linux bugs (relative
-  path resolved twice under the child's cwd; wineserver killed on every
-  Linux run, not just wine ones) were caught by the linux-elf job and are
-  fixed on main.
-- **Open:** the Wine path of the smoke test is still unrun. Coins not
-  handled. Extra payment methods (zelle/card) need a spec line. History
-  still holds 30 MB of old binaries.
-- **Next:** merge this branch, then tag v0.1.2.
+- **Branch:** fix/touchpad-scrolling
+- **Done:** v0.1.2 released (dark mode + the scrolling, dialog placement
+  and label fixes); both binaries attached. Then fixed touchpad scrolling
+  in dialogs: the wheel handler truncated sub-notch deltas to zero.
+- **Verified:** 80 tests green on Windows. The new test fails on the old
+  arithmetic at deltas of 40, 20 and 12 and passes at 120, which is
+  exactly the reported symptom.
+- **Open:** not yet released; would be 0.1.3. The Wine path of the smoke
+  test is still unrun. `v0.1.0`'s release notes should point users at a
+  newer version, since its exe predates the launch fix. Coins not
+  handled. Extra payment methods (zelle/card) need a spec line.
+- **Next:** decide whether to cut 0.1.3.

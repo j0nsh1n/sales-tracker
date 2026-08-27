@@ -70,6 +70,14 @@ SELF_SCROLLING = (ttk.Treeview, tk.Listbox, tk.Text)
 # Key under which the appearance choice is kept in the ledger's settings table.
 THEME_SETTING = "theme"
 
+# What one wheel unit is worth, matching Tk 9's own `tk::MouseWheel` binding.
+# A classic mouse notch reports 120, but a precision touchpad sends far
+# smaller deltas: dividing by 120 and truncating to an int discarded every one
+# of them, so the dialogs only moved when dragged by the scrollbar. Tk accepts
+# a fractional amount here and accumulates it, which is how the order list has
+# always scrolled smoothly under the same fingers.
+WHEEL_DIVISOR = 40.0
+
 
 def _descendant_canvases(widget: tk.Misc) -> list[tk.Canvas]:
     """Every Canvas under widget. These hold a colour ttk styles cannot set."""
@@ -145,8 +153,9 @@ def scrollable_body(window: tk.Toplevel) -> ttk.Frame:
     def _wheel(event: tk.Event) -> None:
         if _owns_scroll(getattr(event, "widget", None)):
             return
-        if getattr(event, "delta", 0):
-            canvas.yview_scroll(int(-event.delta / 120), "units")
+        delta = getattr(event, "delta", 0)
+        if delta:
+            canvas.yview_scroll(-delta / WHEEL_DIVISOR, "units")
         elif getattr(event, "num", None) == 4:
             canvas.yview_scroll(-1, "units")
         elif getattr(event, "num", None) == 5:

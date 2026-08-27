@@ -998,6 +998,59 @@ class GuiPresentationTests(unittest.TestCase):
                     "added later would not scroll",
                 )
 
+    def _wheel_positions(self, target, deltas):
+        """Scroll from the top with each delta and report where it ended up.
+
+        The event goes to the widget the pointer would be over, because that
+        is what decides which bindtags -- and so which handler -- see it.
+        """
+        seen = {}
+        for delta in deltas:
+            target.yview_moveto(0)
+            target.update()
+            for _ in range(3):
+                target.event_generate("<MouseWheel>", delta=delta, x=50, y=50)
+                target.update()
+            seen[delta] = target.yview()[0]
+        return seen
+
+    def test_touchpad_sized_wheel_deltas_scroll_dialogs(self) -> None:
+        # A classic mouse notch is 120; a precision touchpad sends much less
+        # per event. Dividing by 120 and truncating to an int discarded all of
+        # them, so the dialog only moved when dragged by its scrollbar.
+        from gui import SettingsDialog
+
+        dialog = SettingsDialog(self.app, self.app.tracker, lambda: None)
+        dialog.update()
+        canvas = self._find_canvas(dialog)
+        self.assertIsNotNone(canvas)
+        self.assertLess(
+            canvas.yview()[1], 1.0, "dialog does not overflow, nothing to test"
+        )
+        seen = self._wheel_positions(canvas, (-120, -40, -20, -12))
+        dialog.destroy()
+        for delta, position in seen.items():
+            with self.subTest(delta=delta):
+                self.assertGreater(
+                    position, 0.0, f"a wheel delta of {delta} moved nothing"
+                )
+
+    def test_touchpad_sized_wheel_deltas_scroll_the_order_list(self) -> None:
+        # This one rides Tk's own Treeview binding rather than ours; the test
+        # is here so a future hand-rolled binding cannot quietly regress it.
+        for i in range(60):
+            self.app.tracker.add_order(purchaser=f"Buyer {i:02d}", quantity="2")
+        self.app.refresh()
+        self.app.update()
+        tree = self.app.tree
+        self.assertLess(tree.yview()[1], 1.0, "list does not overflow")
+        seen = self._wheel_positions(tree, (-120, -40, -20, -12))
+        for delta, position in seen.items():
+            with self.subTest(delta=delta):
+                self.assertGreater(
+                    position, 0.0, f"a wheel delta of {delta} moved nothing"
+                )
+
     def test_wheel_is_not_bound_onto_widgets_that_scroll_themselves(self) -> None:
         # Binding the panel's handler onto a Treeview moved both the tree and
         # the panel behind it on one flick.
