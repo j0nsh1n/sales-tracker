@@ -226,11 +226,48 @@ class SettingsDialog(tk.Toplevel):
         self.configure(bg=PANEL)
         self.transient(master)
         self.grab_set()
-        self.minsize(620, 700)
-        self.geometry("660x780")
+        self.minsize(560, 520)
+        self.geometry("640x680")
 
-        pad = ttk.Frame(self, style="Panel.TFrame", padding=24)
-        pad.pack(fill="both", expand=True)
+        shell = ttk.Frame(self, style="Panel.TFrame")
+        shell.pack(fill="both", expand=True)
+        canvas = tk.Canvas(shell, bg=PANEL, highlightthickness=0, borderwidth=0)
+        vsb = ttk.Scrollbar(
+            shell,
+            orient="vertical",
+            command=canvas.yview,
+            style="Ledger.Vertical.TScrollbar",
+        )
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        pad = ttk.Frame(canvas, style="Panel.TFrame", padding=24)
+        inner = canvas.create_window((0, 0), window=pad, anchor="nw")
+
+        def _stretch(event: tk.Event) -> None:
+            canvas.itemconfigure(inner, width=event.width)
+
+        def _region(_event: object = None) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        canvas.bind("<Configure>", _stretch)
+        pad.bind("<Configure>", _region)
+
+        def _wheel(event: tk.Event) -> None:
+            if getattr(event, "delta", 0):
+                canvas.yview_scroll(int(-event.delta / 120), "units")
+            elif getattr(event, "num", None) == 4:
+                canvas.yview_scroll(-1, "units")
+            elif getattr(event, "num", None) == 5:
+                canvas.yview_scroll(1, "units")
+
+        def _bind_wheel(widget: tk.Misc) -> None:
+            widget.bind("<MouseWheel>", _wheel)
+            widget.bind("<Button-4>", _wheel)
+            widget.bind("<Button-5>", _wheel)
+            for child in widget.winfo_children():
+                _bind_wheel(child)
 
         ttk.Label(pad, text="Settings", style="Section.TLabel").pack(anchor="w")
         ttk.Label(
@@ -238,11 +275,11 @@ class SettingsDialog(tk.Toplevel):
             text="Nothing on the main list can be deleted by accident. "
             "Removing rows happens only here.",
             style="Hint.TLabel",
-            wraplength=580,
+            wraplength=560,
         ).pack(anchor="w", pady=(6, 14))
 
         ttk.Label(pad, text="LEDGER FILE", style="Field.TLabel").pack(anchor="w")
-        ttk.Label(pad, text=str(tracker.db_path), style="Hint.TLabel", wraplength=580).pack(
+        ttk.Label(pad, text=str(tracker.db_path), style="Hint.TLabel", wraplength=560).pack(
             anchor="w", pady=(2, 16)
         )
 
@@ -252,13 +289,28 @@ class SettingsDialog(tk.Toplevel):
             text="Type RESET to enable every destructive action below. "
             "None of them can be undone.",
             style="Hint.TLabel",
-            wraplength=580,
+            wraplength=560,
         ).pack(anchor="w", pady=(4, 6))
         self.var_confirm = tk.StringVar()
         ttk.Entry(pad, textvariable=self.var_confirm, style="Ticket.TEntry").pack(
             fill="x", ipady=4, pady=(0, 16)
         )
 
+        self.products_tree = self._picker(
+            pad,
+            "DELETE A PRODUCT",
+            "Click a registered item, then Delete selected product. "
+            "If it still has orders, delete those orders first.",
+            ("name", "unit", "price", "orders"),
+            {
+                "name": ("Product", 190, "w"),
+                "unit": ("Unit", 90, "w"),
+                "price": ("Price", 90, "e"),
+                "orders": ("Orders", 70, "e"),
+            },
+            "Delete selected product",
+            self._delete_product,
+        )
         self.orders_tree = self._picker(
             pad,
             "DELETE AN ORDER",
@@ -272,21 +324,6 @@ class SettingsDialog(tk.Toplevel):
             },
             "Delete selected order",
             self._delete_order,
-        )
-        self.products_tree = self._picker(
-            pad,
-            "DELETE A PRODUCT",
-            "A product with orders on the list cannot be removed until those "
-            "orders are deleted first.",
-            ("name", "unit", "price", "orders"),
-            {
-                "name": ("Product", 190, "w"),
-                "unit": ("Unit", 90, "w"),
-                "price": ("Price", 90, "e"),
-                "orders": ("Orders", 70, "e"),
-            },
-            "Delete selected product",
-            self._delete_product,
         )
 
         ttk.Label(pad, text="RESET EVERYTHING", style="Field.TLabel").pack(
@@ -310,6 +347,9 @@ class SettingsDialog(tk.Toplevel):
 
         self.bind("<Escape>", lambda _e: self.destroy())
         self._reload()
+        self.update_idletasks()
+        _bind_wheel(self)
+        _region()
 
     def _picker(
         self,
@@ -333,7 +373,7 @@ class SettingsDialog(tk.Toplevel):
             show="headings",
             style="Ledger.Treeview",
             selectmode="browse",
-            height=5,
+            height=4,
         )
         for key, (title, width, anchor) in headings.items():
             tree.heading(key, text=title)

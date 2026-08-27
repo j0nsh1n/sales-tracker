@@ -574,6 +574,10 @@ class GuiSmokeTests(unittest.TestCase):
 
         dialog = SettingsDialog(self.app, tracker, on_change=self.app.refresh)
         dialog.update_idletasks()
+        self.assertEqual(
+            {dialog.products_tree.item(i, "values")[0] for i in dialog.products_tree.get_children()},
+            {"Honey", "Jam"},
+        )
         try:
             with patch("gui.messagebox.showinfo"), patch("gui.messagebox.showerror"):
                 # Selected, but the RESET box is empty: nothing is removed.
