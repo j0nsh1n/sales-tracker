@@ -9,7 +9,7 @@
 - Frozen GUI: built by CI; `v*` tags attach Windows exe and Linux ELF to
   a GitHub Release. Binaries are not tracked in git.
 - Git: `j0nsh1n/sales-tracker` (private). Working branch
-  `chore/untrack-binaries`. Nothing pushed this session.
+  `feat/schema-versioning`. Nothing pushed this session.
 
 ## Repo Landmarks
 | Path | Role |
@@ -46,8 +46,9 @@ Product 1---* Order
 ## Non-Obvious Decisions
 - Money is `decimal.Decimal` stored as TEXT, not integer cents.
 - Quantity allows fractions (0.001) so lb / kg still work.
-- Legacy `sales` table, if present, is migrated into products + orders
-  (received starts at 0).
+- Schema version is `PRAGMA user_version` (current 1). Legacy `sales`
+  import is migration 0 → 1 (received starts at 0). Newer-than-code
+  databases raise TrackerError.
 - GUI auto-opens the product wizard when the catalog is empty.
 - Settings reset requires typing RESET so it cannot be a stray click.
 - PyInstaller is build-only, not a runtime dependency.
@@ -66,10 +67,9 @@ Product 1---* Order
 
 ## Session Handoff
 - **Date:** 2026-08-26
-- **Branch:** chore/untrack-binaries
-- **Done:** Untracked `release/` binaries going forward; `v*` tags publish
-  both packages to GitHub Releases. Git history was not rewritten.
-- **Open:** spec.md still names `release/SalesTracker.exe` and
-  `release/SalesTracker-linux-x86_64` as shipped paths. History still
-  holds the 30 MB blobs until an explicit rewrite + force-push.
-- **Next:** Schema versioning, then package restructure. Nothing pushed.
+- **Branch:** feat/schema-versioning
+- **Done:** Untracked binaries; schema version 1 via PRAGMA user_version.
+  40 tests passing.
+- **Open:** spec.md still names `release/` binaries as shipped paths.
+  Git history still holds the 30 MB blobs.
+- **Next:** Package restructure. Nothing pushed.

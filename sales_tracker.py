@@ -28,6 +28,7 @@ DEFAULT_DB = application_dir() / "sales.db"
 MONEY_QUANT = Decimal("0.01")
 QTY_QUANT = Decimal("0.001")
 UNITS = ("each", "jar", "box", "dozen", "lb", "bag", "case", "pack", "bottle")
+SCHEMA_VERSION = 1
 
 
 class TrackerError(ValueError):
@@ -39,9 +40,14 @@ def parse_money(value: object, *, field: str = "price") -> Decimal:
         amount = Decimal(str(value).strip())
     except (InvalidOperation, AttributeError) as exc:
         raise TrackerError(f"{field} must be a number.") from exc
+    if not amount.is_finite():
+        raise TrackerError(f"{field} must be a real number.")
     if amount < 0:
         raise TrackerError(f"{field} cannot be negative.")
-    return amount.quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+    try:
+        return amount.quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+    except InvalidOperation as exc:
+        raise TrackerError(f"{field} is too large.") from exc
 
 
 def parse_qty(
@@ -55,6 +61,8 @@ def parse_qty(
         qty = Decimal(str(value).strip())
     except (InvalidOperation, AttributeError) as exc:
         raise TrackerError(f"{field} must be a number.") from exc
+    if not qty.is_finite():
+        raise TrackerError(f"{field} must be a real number.")
     if qty < minimum:
         if minimum == 0:
             raise TrackerError(f"{field} cannot be negative.")
@@ -63,7 +71,10 @@ def parse_qty(
         raise TrackerError(
             f"{field} cannot be more than {format_qty(maximum)}."
         )
-    return qty.quantize(QTY_QUANT, rounding=ROUND_HALF_UP)
+    try:
+        return qty.quantize(QTY_QUANT, rounding=ROUND_HALF_UP)
+    except InvalidOperation as exc:
+        raise TrackerError(f"{field} is too large.") from exc
 
 
 def parse_quantity(value: object) -> Decimal:
@@ -149,7 +160,13 @@ class SalesTracker:
         self._conn = sqlite3.connect(self.db_path)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
-        self._init_schema()
+        try:
+            self._init_schema()
+        except BaseException:
+            # Never leave a half-opened tracker holding the write lock; the
+            # caller has no object to close() when __init__ raises.
+            self._conn.close()
+            raise
 
     def close(self) -> None:
         self._conn.close()
@@ -160,7 +177,29 @@ class SalesTracker:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
+    def _schema_version(self) -> int:
+        row = self._conn.execute("PRAGMA user_version").fetchone()
+        return int(row[0])
+
     def _init_schema(self) -> None:
+        version = self._schema_version()
+        if version > SCHEMA_VERSION:
+            raise TrackerError(
+                f"This ledger is at schema version {version}; "
+                f"this app only understands up to {SCHEMA_VERSION}."
+            )
+        migrations = (
+            (1, self._migrate_to_v1),
+        )
+        for target, migrator in migrations:
+            if version >= target:
+                continue
+            with self._conn:
+                migrator()
+                self._conn.execute(f"PRAGMA user_version = {int(target)}")
+            version = target
+
+    def _migrate_to_v1(self) -> None:
         self._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS products (
@@ -191,7 +230,6 @@ class SalesTracker:
             "CREATE INDEX IF NOT EXISTS idx_orders_purchaser ON orders(purchaser)"
         )
         self._migrate_legacy_sales()
-        self._conn.commit()
 
     def _migrate_legacy_sales(self) -> None:
         tables = {
@@ -211,12 +249,9 @@ class SalesTracker:
             item = str(row["item"]).strip()
             key = item.casefold()
             if key not in product_ids:
-                product = self.add_product(
-                    name=item,
-                    unit="each",
-                    unit_price=row["unit_price"],
+                product_ids[key] = self._migration_product_id(
+                    item, row["unit_price"]
                 )
-                product_ids[key] = product.id
             ordered = Decimal(str(row["quantity"]))
             created = row["created_at"] if "created_at" in row.keys() else _now()
             self._conn.execute(
@@ -237,6 +272,37 @@ class SalesTracker:
                 ),
             )
         self._conn.execute("DROP TABLE sales")
+
+    def _migration_product_id(self, name: str, unit_price: object) -> int:
+        """Product id for a legacy row, without committing mid-migration.
+
+        Reuses a product of the same name so a migration interrupted partway
+        can be retried on the next open instead of failing on a duplicate.
+        """
+        payload = self._validated_product(
+            name=name, unit="each", unit_price=unit_price, sku="", notes=""
+        )
+        existing = self._conn.execute(
+            "SELECT id FROM products WHERE name = ? COLLATE NOCASE",
+            (payload["name"],),
+        ).fetchone()
+        if existing:
+            return int(existing["id"])
+        cursor = self._conn.execute(
+            """
+            INSERT INTO products (name, unit, unit_price, sku, notes, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                payload["name"],
+                payload["unit"],
+                str(payload["unit_price"]),
+                payload["sku"],
+                payload["notes"],
+                _now(),
+            ),
+        )
+        return int(cursor.lastrowid)
 
     def add_product(
         self,
@@ -291,14 +357,15 @@ class SalesTracker:
 
     def find_product(self, name_or_id: str | int) -> Product:
         text = str(name_or_id).strip()
-        if text.isdigit():
-            return self.get_product(int(text))
+        # Name wins over id so a product literally called "2024" stays reachable.
         row = self._conn.execute(
             "SELECT * FROM products WHERE name = ? COLLATE NOCASE", (text,)
         ).fetchone()
-        if row is None:
-            raise TrackerError(f"No product named {text!r}.")
-        return self._row_to_product(row)
+        if row is not None:
+            return self._row_to_product(row)
+        if text.isdigit():
+            return self.get_product(int(text))
+        raise TrackerError(f"No product named {text!r}.")
 
     def add_order(
         self,
@@ -351,9 +418,17 @@ class SalesTracker:
         clauses: list[str] = []
         params: list[object] = []
         if search:
-            needle = f"%{search.strip()}%"
+            # Escape LIKE metacharacters so a typed % or _ is matched literally.
+            literal = (
+                search.strip()
+                .replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
+            needle = f"%{literal}%"
             clauses.append(
-                "(o.purchaser LIKE ? COLLATE NOCASE OR p.name LIKE ? COLLATE NOCASE)"
+                "(o.purchaser LIKE ? ESCAPE '\\' COLLATE NOCASE "
+                "OR p.name LIKE ? ESCAPE '\\' COLLATE NOCASE)"
             )
             params.extend([needle, needle])
         flag = (status or "all").strip().lower()
@@ -413,6 +488,32 @@ class SalesTracker:
             units_remaining=units_remaining,
             revenue=revenue.quantize(MONEY_QUANT, rounding=ROUND_HALF_UP),
         )
+
+    def delete_order(self, order_id: int) -> Order:
+        """Remove one order. Settings-only; the main list has no delete."""
+        order = self.get_order(order_id)
+        self._conn.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+        self._conn.commit()
+        return order
+
+    def count_orders_for_product(self, product_id: int) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM orders WHERE product_id = ?", (product_id,)
+        ).fetchone()
+        return int(row[0])
+
+    def delete_product(self, product_id: int) -> Product:
+        """Remove one product. Refuses while orders still reference it."""
+        product = self.get_product(product_id)
+        attached = self.count_orders_for_product(product_id)
+        if attached:
+            raise TrackerError(
+                f"{product.name} still has {attached} order(s). "
+                "Delete those orders first."
+            )
+        self._conn.execute("DELETE FROM products WHERE id = ?", (product_id,))
+        self._conn.commit()
+        return product
 
     def reset_orders(self) -> int:
         count = self._conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
@@ -711,14 +812,64 @@ class InteractiveSession:
             f"  ({updated.status}).\n"
         )
 
+    def _delete_order(self) -> None:
+        orders = self.tracker.list_orders()
+        if not orders:
+            self.write("No orders to delete.\n")
+            return
+        _print_orders(orders, self.write)
+        raw_id = self.ask("Delete which order number?\n> ").strip()
+        try:
+            order = self.tracker.get_order(int(raw_id))
+        except ValueError as exc:
+            raise TrackerError("Order number must be a whole number.") from exc
+        self.write(
+            f"This deletes {order.purchaser}'s order for "
+            f"{format_qty(order.quantity_ordered)} {order.product_unit} of "
+            f"{order.product_name}. It cannot be undone.\n"
+        )
+        if self.ask("Type DELETE to confirm.\n> ").strip() != "DELETE":
+            self.write("Delete cancelled.\n")
+            return
+        self.tracker.delete_order(order.id)
+        self.write(f"Deleted order #{order.id}.\n")
+
+    def _delete_product(self) -> None:
+        products = self.tracker.list_products()
+        if not products:
+            self.write("No products to delete.\n")
+            return
+        _print_products(products, self.write)
+        product = self.tracker.find_product(
+            self.ask("Delete which product? (name or number)\n> ")
+        )
+        attached = self.tracker.count_orders_for_product(product.id)
+        if attached:
+            raise TrackerError(
+                f"{product.name} still has {attached} order(s). "
+                "Delete those orders first."
+            )
+        self.write(f"This deletes {product.name}. It cannot be undone.\n")
+        if self.ask("Type DELETE to confirm.\n> ").strip() != "DELETE":
+            self.write("Delete cancelled.\n")
+            return
+        self.tracker.delete_product(product.id)
+        self.write(f"Deleted {product.name}.\n")
+
     def _settings(self) -> None:
         self.write("\nSettings\n")
-        self.write("  Orders never disappear unless you reset them here.\n")
+        self.write("  Orders never disappear unless you remove them here.\n")
+        self.write("  o) Delete one order\n")
+        self.write("  p) Delete one product\n")
         self.write("  r) Reset all orders (keeps products)\n")
         self.write("  a) Reset everything (products and orders)\n")
         self.write("  b) Back\n")
         choice = self.ask("> ").strip().casefold()
-        if choice == "r":
+        if choice == "o":
+            self._delete_order()
+        elif choice == "p":
+            self._delete_product()
+        elif choice == "r":
             confirm = self.ask("Type RESET to clear every order off the list.\n> ")
             if confirm.strip() != "RESET":
                 self.write("Reset cancelled.\n")
@@ -781,6 +932,13 @@ def build_parser() -> argparse.ArgumentParser:
     reset.add_argument("--orders", action="store_true", help="Delete all orders, keep products")
     reset.add_argument("--all", dest="all_data", action="store_true", help="Delete products and orders")
     reset.add_argument("--yes", action="store_true", help="Confirm the reset")
+
+    delete = sub.add_parser(
+        "delete", help="Delete one order or product (Settings-level action)"
+    )
+    delete.add_argument("kind", choices=("order", "product"))
+    delete.add_argument("id", type=int)
+    delete.add_argument("--yes", action="store_true", help="Confirm the delete")
 
     sub.add_parser("interactive", help="Menu-driven session")
     return parser
@@ -850,6 +1008,18 @@ def main(argv: list[str] | None = None) -> int:
                 )
             elif args.command == "summary":
                 _print_summary(tracker.summary())
+            elif args.command == "delete":
+                if not args.yes:
+                    raise TrackerError("Delete refused: pass --yes to confirm.")
+                if args.kind == "order":
+                    removed = tracker.delete_order(args.id)
+                    print(
+                        f"Deleted order #{removed.id} "
+                        f"({removed.purchaser} / {removed.product_name})."
+                    )
+                else:
+                    product = tracker.delete_product(args.id)
+                    print(f"Deleted product #{product.id} ({product.name}).")
             elif args.command == "reset":
                 if not args.yes:
                     raise TrackerError("Reset refused: pass --yes to confirm.")
