@@ -3,19 +3,21 @@
 ## Current State
 - Folder: `/home/jonathans/Sales Tracker App`.
 - App is a **SQLite ledger** with two entry points: interactive CLI
-  (`sales_tracker.py`) and Tkinter UI (`gui.py`). Shared class: `SalesTracker`.
-- Tests: `python3 -m unittest test_sales_tracker.py` — 37 passed (5 skip
-  headless: GUI tests need a display). Lint / types: **not configured**.
+  (`sales_tracker.py`) and Tkinter UI (`gui.py`). Implementation lives in
+  the `salestracker` package; root files are shims.
+- Tests: `python3 -m unittest test_sales_tracker.py` — 40 passed.
+  Lint / types: **not configured**.
 - Frozen GUI: built by CI; `v*` tags attach Windows exe and Linux ELF to
   a GitHub Release. Binaries are not tracked in git.
 - Git: `j0nsh1n/sales-tracker` (private). Working branch
-  `feat/schema-versioning`. Nothing pushed this session.
+  `refactor/package-restructure`. Nothing pushed this session.
 
 ## Repo Landmarks
 | Path | Role |
 |------|------|
-| `sales_tracker.py` | Products, orders, fulfillment, interactive CLI, reset |
-| `gui.py` | Product wizard, order list, received box, Settings |
+| `salestracker/` | models, store, cli, `ui/gui.py` |
+| `sales_tracker.py` | Thin CLI shim |
+| `gui.py` | Thin GUI shim |
 | `test_sales_tracker.py` | unittest for library, CLI, interactive session, GUI |
 | `SalesTracker.spec` | PyInstaller spec for frozen GUI builds |
 | `release/` | gitignored (local binaries and `sales.db`; not tracked) |
@@ -67,9 +69,10 @@ Product 1---* Order
 
 ## Session Handoff
 - **Date:** 2026-08-26
-- **Branch:** feat/schema-versioning
-- **Done:** Untracked binaries; schema version 1 via PRAGMA user_version.
-  40 tests passing.
-- **Open:** spec.md still names `release/` binaries as shipped paths.
-  Git history still holds the 30 MB blobs.
-- **Next:** Package restructure. Nothing pushed.
+- **Branch:** refactor/package-restructure
+- **Done:** Untracked binaries; schema v1; package split. 40 tests passing.
+  Frozen Linux GUI still starts. Nothing pushed.
+- **Open:** spec.md still names `release/` binaries as shipped paths and
+  lists `sales_tracker.py` as the implementation. Git history still holds
+  the 30 MB blobs until an explicit rewrite + force-push.
+- **Next:** Human applies spec wording and decides on history rewrite.

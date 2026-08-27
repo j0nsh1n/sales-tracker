@@ -4,7 +4,15 @@
 from PyInstaller.utils.hooks import collect_all
 
 datas, binaries, hiddenimports = collect_all("tkinter")
-hiddenimports += ["sales_tracker"]
+hiddenimports += [
+    "sales_tracker",
+    "salestracker",
+    "salestracker.models",
+    "salestracker.store",
+    "salestracker.cli",
+    "salestracker.ui",
+    "salestracker.ui.gui",
+]
 
 a = Analysis(
     ["gui.py"],

@@ -27,6 +27,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `SalesTracker.exe` and `SalesTracker-linux-x86_64` to a GitHub Release.
 - Ledgers now carry a schema version (`PRAGMA user_version` = 1). Older
   files upgrade on open; a file from a newer app is refused.
+- Library layout is now the `salestracker` package. `python3 sales_tracker.py`
+  and `python3 gui.py` still work.
 - Ledger is now products + orders with fulfillment, not free-text sale lines.
 - Individual order delete was removed from the main list in the CLI and GUI;
   deleting is possible only from Settings.
