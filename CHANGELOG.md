@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- `tools/smoke_test.py`: launches a frozen build the way a double-click
+  does and requires a real visible window, so a packaged build that starts
+  but shows nothing is caught. Runs on Windows and Linux, and can drive the
+  Windows `.exe` through Wine with `--wine`. CI runs it on both targets
+  after the build step.
 - Project governance set: `agents.md`, `spec.md`, `roadmap.md`, `context.md`,
   `CHANGELOG.md`, short `README.md`, and `.gitignore`.
 - Product setup wizard (GUI and interactive CLI) before orders can be logged.
@@ -68,6 +73,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   exe build only runs once the tests pass.
 
 ### Fixed
+- The packaged Windows `.exe` did not launch. Double-clicking it showed an
+  "Unhandled exception in script" dialog and no window, from two separate
+  faults: PyInstaller 6.21.0 bundled no Tcl/Tk data for Python 3.14's
+  Tcl/Tk 9 (whose library ships inside a zip, mounted through Tcl's own
+  zipfs), and the CLI module read `sys.stdout` at import time, which is
+  `None` in a windowed build started without a console. Either fault
+  alone was enough to kill the app before it drew anything.
 - Entering a price or quantity of `nan`, `Infinity`, or an oversized value
   such as `1e999` crashed instead of reporting a validation error. In the
   packaged GUI the crash was silent and the button simply did nothing.

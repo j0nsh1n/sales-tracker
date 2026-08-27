@@ -93,7 +93,9 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
   frozen binary (gitignored). Path override: `--db`.
 - Packaged GUI: PyInstaller onefile via `SalesTracker.spec`. PyInstaller
   is **build-only**, pinned in `requirements-build.txt` as
-  `pyinstaller==6.21.0`. Shipped binaries:
+  `pyinstaller==6.22.2`. Do not drop below 6.22: 6.21.0 collects no Tcl/Tk
+  data against Python 3.14 and produces a Windows exe that cannot start.
+  Shipped binaries:
   - `release/SalesTracker.exe` — Windows PE32+
   - `release/SalesTracker-linux-x86_64` — Linux ELF x86-64
   GitHub Actions (`.github/workflows/ci.yml`) runs the test suite on every
@@ -132,6 +134,10 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
 ## Validation & Tooling
 - Tests: `python3 -m unittest test_sales_tracker.py` — must pass. GUI tests
   are skipped when no display is available, so the suite is green headless.
+- Packaged builds: `python3 tools/smoke_test.py` — must pass. A frozen build
+  can start and still show no window while PyInstaller exits 0, so this
+  launches the binary detached with no console and requires a real visible
+  window. CI runs it after both the Windows and Linux build steps.
 - Lint / types: **not configured**. Treat `ruff` / `pyright` as report-only
   until `pyproject.toml` / `pyrightconfig.json` exist. Do not install that
   tooling on your own initiative.

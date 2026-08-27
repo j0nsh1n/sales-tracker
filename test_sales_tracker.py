@@ -3,10 +3,14 @@
 
 from __future__ import annotations
 
+import ast
 import csv
 import io
 import sqlite3
+import subprocess
+import sys
 import tempfile
+import textwrap
 import unittest
 from decimal import Decimal
 from pathlib import Path
@@ -36,12 +40,16 @@ from sales_tracker import (
 class SalesTrackerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
+        # Registered before any test opens a connection of its own, so it runs
+        # last: cleanups run after tearDown and in reverse order, and Windows
+        # refuses to unlink a database file while a connection to it is open.
+        self.addCleanup(self.tmp.cleanup)
         self.db = Path(self.tmp.name) / "sales.db"
         self.tracker = SalesTracker(self.db)
 
     def tearDown(self) -> None:
+        # Looked up dynamically: some tests replace self.tracker mid-test.
         self.tracker.close()
-        self.tmp.cleanup()
 
     def _product(self, name: str = "Honey", **kwargs):
         payload = dict(name=name, unit="jar", unit_price="12.50")
@@ -753,6 +761,90 @@ class GuiSmokeTests(unittest.TestCase):
         joined = " ".join(texts).lower()
         self.assertNotIn("delete selected", joined)
         self.assertIn("settings", joined)
+
+
+# A packaged windowed build (PyInstaller console=False) that is double-clicked
+# has no console attached, so sys.stdout and sys.stderr are None. Anything the
+# import chain evaluates at module level therefore has to survive that. These
+# guards run on any platform, so Linux CI catches a Windows-only launch bug.
+_STREAM_ATTRS = frozenset({"stdout", "stderr", "stdin"})
+
+_PACKAGE_ROOT = Path(__file__).resolve().parent
+
+
+def _import_time_nodes(tree: ast.AST):
+    """Yield the AST nodes that run when the module is imported.
+
+    Function bodies are skipped because they run later; decorators and default
+    arguments are not, because those are evaluated at definition time -- which
+    is exactly how sys.stdout.write once slipped into import-time code.
+    """
+    stack = list(getattr(tree, "body", []))
+    while stack:
+        node = stack.pop()
+        yield node
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            stack.extend(getattr(node, "decorator_list", []))
+            stack.extend(d for d in node.args.defaults if d is not None)
+            stack.extend(d for d in node.args.kw_defaults if d is not None)
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+
+
+class FrozenLaunchGuardTests(unittest.TestCase):
+    """Regressions for the packaged GUI failing to launch."""
+
+    def test_no_import_time_console_stream_access(self) -> None:
+        offenders = []
+        for path in sorted(_PACKAGE_ROOT.glob("salestracker/**/*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in _import_time_nodes(tree):
+                if (
+                    isinstance(node, ast.Attribute)
+                    and node.attr in _STREAM_ATTRS
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id == "sys"
+                ):
+                    rel = path.relative_to(_PACKAGE_ROOT)
+                    offenders.append(f"{rel}:{node.lineno} sys.{node.attr}")
+        self.assertEqual(
+            offenders,
+            [],
+            "sys.stdout/sys.stderr must not be read at import time; a "
+            "double-clicked windowed build has them set to None. Resolve the "
+            "stream inside the function instead.",
+        )
+
+    def test_gui_imports_without_console_streams(self) -> None:
+        probe = textwrap.dedent(
+            """
+            import sys, traceback
+            report = sys.argv[1]
+            sys.stdout = None
+            sys.stderr = None
+            try:
+                import salestracker.ui.gui  # noqa: F401
+            except BaseException:
+                with open(report, "w", encoding="utf-8") as fh:
+                    traceback.print_exc(file=fh)
+                raise SystemExit(1)
+            raise SystemExit(0)
+            """
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "traceback.txt"
+            completed = subprocess.run(
+                [sys.executable, "-c", probe, str(report)],
+                cwd=str(_PACKAGE_ROOT),
+                capture_output=True,
+                text=True,
+            )
+            detail = report.read_text(encoding="utf-8") if report.exists() else ""
+        self.assertEqual(
+            completed.returncode,
+            0,
+            "importing the GUI with no console streams failed: " + detail,
+        )
 
 
 if __name__ == "__main__":

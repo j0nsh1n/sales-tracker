@@ -27,6 +27,22 @@ PromptFn = Callable[[str], str]
 WriteFn = Callable[[str], None]
 
 
+def _stdout_write(write: WriteFn | None) -> WriteFn:
+    """Resolve the output sink when the printer runs, not when it is defined.
+
+    A frozen windowed build (PyInstaller ``console=False``) launched without a
+    console — a double-click — has ``sys.stdout`` set to ``None``. Binding
+    ``sys.stdout.write`` as a default argument evaluates it at import time,
+    which killed the GUI .exe before it could open a window.
+    """
+    if write is not None:
+        return write
+    stream = sys.stdout
+    if stream is None:
+        return lambda _text: None
+    return stream.write
+
+
 def collect_product_answers(ask: PromptFn, write: WriteFn) -> dict[str, str]:
     """Walk through establishing a product, one question at a time."""
     write("Let's set up what you sell. One question at a time.\n")
@@ -62,7 +78,8 @@ def collect_product_answers(ask: PromptFn, write: WriteFn) -> dict[str, str]:
     }
 
 
-def _print_orders(orders: list[Order], write: WriteFn = sys.stdout.write) -> None:
+def _print_orders(orders: list[Order], write: WriteFn | None = None) -> None:
+    write = _stdout_write(write)
     if not orders:
         write("No orders on the list.\n")
         return
@@ -81,7 +98,8 @@ def _print_orders(orders: list[Order], write: WriteFn = sys.stdout.write) -> Non
         )
 
 
-def _print_products(products: list[Product], write: WriteFn = sys.stdout.write) -> None:
+def _print_products(products: list[Product], write: WriteFn | None = None) -> None:
+    write = _stdout_write(write)
     if not products:
         write("No product established yet.\n")
         return
@@ -93,7 +111,8 @@ def _print_products(products: list[Product], write: WriteFn = sys.stdout.write) 
         )
 
 
-def _print_summary(summary: Summary, write: WriteFn = sys.stdout.write) -> None:
+def _print_summary(summary: Summary, write: WriteFn | None = None) -> None:
+    write = _stdout_write(write)
     write(
         f"{summary.order_count} order(s)  ·  "
         f"{summary.outstanding_count} outstanding  ·  "
@@ -103,7 +122,8 @@ def _print_summary(summary: Summary, write: WriteFn = sys.stdout.write) -> None:
     )
 
 
-def _print_financials(money: Financials, write: WriteFn = sys.stdout.write) -> None:
+def _print_financials(money: Financials, write: WriteFn | None = None) -> None:
+    write = _stdout_write(write)
     rows = (
         ("Cash collected", money.cash_collected),
         ("Cash still to collect", money.cash_uncollected),

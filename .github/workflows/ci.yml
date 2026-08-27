@@ -43,6 +43,12 @@ jobs:
       - name: Build SalesTracker.exe
         run: python -m PyInstaller --noconfirm SalesTracker.spec
 
+      # A packaged build can fail in ways the unit suite cannot see, and
+      # PyInstaller reports a missing Tcl data directory as a warning while
+      # still exiting 0. Launch the thing and require a real window.
+      - name: Smoke test the exe
+        run: python tools/smoke_test.py --binary dist/SalesTracker.exe
+
       - name: Upload exe
         continue-on-error: true
         uses: actions/upload-artifact@v4
@@ -69,12 +75,18 @@ jobs:
 
       - name: Install Tk and PyInstaller
         run: |
-          sudo apt-get update && sudo apt-get install -y python3-tk
+          sudo apt-get update
+          sudo apt-get install -y python3-tk xvfb xdotool
           python -m pip install --upgrade pip
           python -m pip install -r requirements-build.txt
 
       - name: Build Linux ELF
         run: python -m PyInstaller --noconfirm SalesTracker.spec
+
+      # Same check as the Windows job, on a virtual display. xdotool is what
+      # reports the window; without it the harness exits 2 rather than passing.
+      - name: Smoke test the ELF
+        run: xvfb-run -a python tools/smoke_test.py --binary dist/SalesTracker
 
       - name: Name the Linux binary
         run: mv dist/SalesTracker dist/SalesTracker-linux-x86_64

@@ -59,6 +59,26 @@ python3 -m PyInstaller --noconfirm SalesTracker.spec
 # Windows output: dist/SalesTracker.exe
 ```
 
+A packaged build can start and still be unusable — no window, or an error
+dialog — while the unit suite stays green and PyInstaller exits 0. After
+building, launch it and check that a window really opens:
+
+```bash
+python3 tools/smoke_test.py
+```
+
+It starts the binary detached with no console, the way a double-click does,
+and waits for a visible window titled `Sales Tracker`. Exit 0 means the app
+came up, 1 means it did not, 2 means the check itself could not run. CI runs
+this on both targets. On Linux it needs `xdotool` to see windows, and a
+display (`xvfb-run -a` works headless).
+
+To check the Windows `.exe` from a Linux machine:
+
+```bash
+python3 tools/smoke_test.py --binary dist/SalesTracker.exe --wine
+```
+
 This is a sales log with fulfillment tracking — not a CRM, not accounting
 software, and not a payment processor.
 
