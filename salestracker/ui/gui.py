@@ -143,16 +143,39 @@ def bind_wheel_scroll(widget: tk.Misc, view: tk.Misc | None = None) -> None:
         widget.bind(sequence, handler)
 
 
-def _descendant_canvases(widget: tk.Misc) -> list[tk.Canvas]:
-    """Every Canvas under widget. These hold a colour ttk styles cannot set."""
-    found: list[tk.Canvas] = []
+def _descendants(widget: tk.Misc, cls: type) -> list:
+    """Every descendant of widget that is an instance of cls."""
+    found: list = []
     stack = list(widget.winfo_children())
     while stack:
         child = stack.pop()
-        if isinstance(child, tk.Canvas):
+        if isinstance(child, cls):
             found.append(child)
         stack.extend(child.winfo_children())
     return found
+
+
+def _descendant_canvases(widget: tk.Misc) -> list[tk.Canvas]:
+    """Every Canvas under widget. These hold a colour ttk styles cannot set."""
+    return _descendants(widget, tk.Canvas)
+
+
+def _drop_combobox_popdowns(widget: tk.Misc) -> None:
+    """Destroy every combobox dropdown list that was already built.
+
+    The dropdown is a plain Tk listbox ttk cannot restyle: it is born with
+    whatever the option database said the day it was first opened, so it
+    would keep the old palette after a switch. Tk 8.6 and 9 both rebuild the
+    popdown on demand once it is gone, so the next open reads the new
+    colours. One that was open at that moment simply closes.
+
+    The popdown is created by Tcl, not by this module, so it is invisible to
+    Python's widget registry: existence and destruction go through Tcl.
+    """
+    for combo in _descendants(widget, ttk.Combobox):
+        path = f"{combo}.popdown"
+        if combo.tk.call("winfo", "exists", path):
+            combo.tk.call("destroy", path)
 
 
 def center_on_parent(window: tk.Toplevel, parent: tk.Misc) -> None:
@@ -942,6 +965,7 @@ class SalesApp(tk.Tk):
                     rule.configure(bg=LINE)
             for canvas in _descendant_canvases(window):
                 canvas.configure(bg=PANEL)
+        _drop_combobox_popdowns(self)
         return self.theme_painted
 
     def _watch_os_theme(self) -> None:

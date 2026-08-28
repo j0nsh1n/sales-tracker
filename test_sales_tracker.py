@@ -1263,11 +1263,58 @@ class GuiThemeTests(unittest.TestCase):
         dialog.destroy()
         self.assertEqual(bgs, [line] * len(bgs))
 
+    def test_combobox_dropdown_rebuilds_in_the_new_palette(self) -> None:
+        app = self._app()
+        app.set_theme(theme.LIGHT)
+        combo = app.method_combo
+        # The dropdown listbox is only built on the first open; force that
+        # first open here instead of simulating a click.
+        combo.tk.call("ttk::combobox::PopdownWindow", combo)
+        app.update_idletasks()
+        self.assertEqual(
+            app.tk.call(combobox_listbox(app, combo), "cget", "-background"),
+            theme.PALETTES[theme.LIGHT]["FIELD"],
+        )
+
+        app.set_theme(theme.DARK)
+        app.update_idletasks()
+        # The stale popdown is gone, and the next open rebuilds it in the
+        # new palette.
+        self.assertFalse(combo.tk.call("winfo", "exists", f"{combo}.popdown"))
+        combo.tk.call("ttk::combobox::PopdownWindow", combo)
+        self.assertEqual(
+            app.tk.call(combobox_listbox(app, combo), "cget", "-background"),
+            theme.PALETTES[theme.DARK]["FIELD"],
+        )
+
 
 def gui_canvases(widget):
     from salestracker.ui import gui as gui_module
 
     return gui_module._descendant_canvases(widget)
+
+
+def combobox_listbox(app, combo):
+    """Path to the dropdown's plain Tk listbox, wherever this Tk buries it.
+
+    Tk 9 keeps it at `<combo>.popdown.l`, 8.6 at `<combo>.popdown.f.l`, and
+    the popdown is created by Tcl, so this hunts by widget class rather than
+    through Python's widget registry.
+    """
+
+    def hunt(path):
+        for child in app.tk.splitlist(app.tk.call("winfo", "children", path)):
+            if app.tk.call("winfo", "class", child) == "Listbox":
+                return str(child)
+            found = hunt(child)
+            if found:
+                return found
+        return None
+
+    found = hunt(f"{combo}.popdown")
+    if found is None:
+        raise AssertionError("the combobox popdown has no listbox")
+    return found
 
 
 def collect_radio_labels(widget):
