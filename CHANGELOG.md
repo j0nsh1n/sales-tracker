@@ -80,6 +80,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   by name.
 - A tracker whose startup failed kept the database write-locked for the rest
   of the process.
+
+## [0.1.4] - 2026-08-28
+
+### Fixed
 - Switching theme while the Money page was open left its separator rules in
   the old colours until the dialog was reopened. Dialogs now register their
   hairline rules, and a switch repaints them with everything else.
