@@ -10,8 +10,7 @@
   Lint / types: **not configured**.
 - Frozen GUI: built by CI; `v*` tags attach Windows exe and Linux ELF to
   a GitHub Release. Binaries are not tracked in git.
-- Git: `j0nsh1n/sales-tracker` (private). Working branch
-  `fix/theme-repaint-gaps`; `main` is at v0.1.3.
+- Git: `j0nsh1n/sales-tracker` (private). On `main`, at v0.1.4.
 
 ## Repo Landmarks
 | Path | Role |
@@ -111,19 +110,19 @@ Product 1---* Order
 
 ## Session Handoff
 - **Date:** 2026-08-28
-- **Branch:** `fix/theme-repaint-gaps` (three commits on top of f5cfe0e)
-- **Done:** three code-review fixes. Theme switches now repaint the Money
-  dialog's hairline rules (dialogs keep a `_rules` list like the main
-  window) and discard built combobox dropdowns so they rebuild in the new
-  palette; the desktop-theme poll is 15s off Windows, 4s on Windows.
-- **Verified:** 84 tests green locally (Linux, Tk 9, Python 3.14.7), four
-  of them new: money-dialog rules repaint, dropdown rebuild, poll
-  scheduling, poll interval shape. Dropdown fix also checked by hand
-  (create / switch / recreate against Tk 9).
-- **Open:** the Wine path of the smoke test is still unrun. `v0.1.0`'s
-  release notes should point users at a newer version, since its exe
-  predates the launch fix. Coins not handled. Extra payment methods
-  (zelle/card) need a spec line. History still holds 30 MB of old
-  binaries. `docs/design/` remains untracked.
-- **Next:** review and merge `fix/theme-repaint-gaps`; 0.1.4 entries are
-  sitting under Unreleased in CHANGELOG.md.
+- **Branch:** `main` (PR #6 merged, tagged v0.1.4)
+- **Done:** three code-review fixes released as 0.1.4. Theme switches now
+  repaint the Money dialog's hairline rules (dialogs keep a `_rules` list
+  like the main window) and discard built combobox dropdowns so they
+  rebuild in the new palette; the desktop-theme poll is 15s off Windows,
+  4s on Windows. v0.1.0's release notes now warn that its exe predates the
+  launch fix.
+- **Verified:** 84 tests green on the PR's CI (tests, windows-exe,
+  linux-elf all pass) and locally (Linux, Tk 9, Python 3.14.7); four new
+  tests cover the fixes. ELF also built and smoke-tested locally before
+  the PR; the v0.1.4 exe and ELF were smoke-tested by CI and are attached
+  to the GitHub Release with notes.
+- **Open:** the Wine path of the smoke test is still unrun. Coins not
+  handled. Extra payment methods (zelle/card) need a spec line. History
+  still holds 30 MB of old binaries. `docs/design/` remains untracked.
+- **Next:** nothing outstanding; 0.1.4 is the current release.
