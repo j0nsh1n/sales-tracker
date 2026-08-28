@@ -1247,6 +1247,22 @@ class GuiThemeTests(unittest.TestCase):
         self.assertEqual(app.theme_choice, theme.DARK)
         self.assertEqual(app.tracker.get_setting("theme"), theme.DARK)
 
+    def test_open_money_dialog_rules_repaint(self) -> None:
+        from gui import MoneyDialog
+
+        app = self._app()
+        app.set_theme(theme.LIGHT)
+        dialog = MoneyDialog(app, app.tracker)
+        dialog.update_idletasks()
+        self.assertTrue(dialog._rules, "the money page lost its separators")
+
+        app.set_theme(theme.DARK)
+        app.update_idletasks()
+        line = theme.PALETTES[theme.DARK]["LINE"]
+        bgs = [rule.cget("bg") for rule in dialog._rules]
+        dialog.destroy()
+        self.assertEqual(bgs, [line] * len(bgs))
+
 
 def gui_canvases(widget):
     from salestracker.ui import gui as gui_module

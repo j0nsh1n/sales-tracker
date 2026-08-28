@@ -678,6 +678,9 @@ class MoneyDialog(tk.Toplevel):
         self.money = tracker.financials()
         self.var_counts: dict[int, tk.StringVar] = {}
         self.var_subtotals: dict[int, tk.StringVar] = {}
+        # Plain Tk hairlines below hold their own colour; SalesApp._repaint
+        # recolours whatever a toplevel lists here when the theme changes.
+        self._rules: list[tk.Frame] = []
         self.var_counted = tk.StringVar(value=format_money(Decimal("0.00")))
         self.var_expected = tk.StringVar(
             value=format_money(self.money.cash_collected)
@@ -713,6 +716,12 @@ class MoneyDialog(tk.Toplevel):
         self._recount()
         center_on_parent(self, master)
 
+    def _rule(self, parent: ttk.Frame, pady: int | tuple[int, int]) -> None:
+        """A hairline separator, registered so a theme switch recolours it."""
+        rule = tk.Frame(parent, bg=LINE, height=1)
+        rule.pack(fill="x", pady=pady)
+        self._rules.append(rule)
+
     # ------------------------------------------------------------- expected
 
     def _build_expected(self, parent: ttk.Frame) -> None:
@@ -734,7 +743,7 @@ class MoneyDialog(tk.Toplevel):
         )
         for label, amount, emphasis in rows:
             if label is None:
-                tk.Frame(box, bg=LINE, height=1).pack(fill="x", pady=8)
+                self._rule(box, pady=8)
                 continue
             line = ttk.Frame(box, style="Panel.TFrame")
             line.pack(fill="x", pady=2)
@@ -780,7 +789,7 @@ class MoneyDialog(tk.Toplevel):
                 row=row, column=2, sticky="e", pady=3
             )
 
-        tk.Frame(box, bg=LINE, height=1).pack(fill="x", pady=10)
+        self._rule(box, pady=10)
         total = ttk.Frame(box, style="Panel.TFrame")
         total.pack(fill="x")
         ttk.Label(total, text="COUNTED", style="Field.TLabel").pack(side="left")
@@ -794,7 +803,7 @@ class MoneyDialog(tk.Toplevel):
     def _build_verdict(self, parent: ttk.Frame) -> None:
         box = ttk.Frame(parent, style="Panel.TFrame")
         box.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(18, 0))
-        tk.Frame(box, bg=LINE, height=1).pack(fill="x", pady=(0, 12))
+        self._rule(box, pady=(0, 12))
 
         line = ttk.Frame(box, style="Panel.TFrame")
         line.pack(fill="x")
@@ -927,6 +936,10 @@ class SalesApp(tk.Tk):
         for window in self.winfo_children():
             if isinstance(window, tk.Toplevel):
                 window.configure(bg=PANEL)
+                # A dialog may keep its own hairline list (see MoneyDialog);
+                # its rules then need the same telling the main window's do.
+                for rule in getattr(window, "_rules", ()):
+                    rule.configure(bg=LINE)
             for canvas in _descendant_canvases(window):
                 canvas.configure(bg=PANEL)
         return self.theme_painted
