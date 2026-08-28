@@ -1247,11 +1247,92 @@ class GuiThemeTests(unittest.TestCase):
         self.assertEqual(app.theme_choice, theme.DARK)
         self.assertEqual(app.tracker.get_setting("theme"), theme.DARK)
 
+    def test_open_money_dialog_rules_repaint(self) -> None:
+        from gui import MoneyDialog
+
+        app = self._app()
+        app.set_theme(theme.LIGHT)
+        dialog = MoneyDialog(app, app.tracker)
+        dialog.update_idletasks()
+        self.assertTrue(dialog._rules, "the money page lost its separators")
+
+        app.set_theme(theme.DARK)
+        app.update_idletasks()
+        line = theme.PALETTES[theme.DARK]["LINE"]
+        bgs = [rule.cget("bg") for rule in dialog._rules]
+        dialog.destroy()
+        self.assertEqual(bgs, [line] * len(bgs))
+
+    def test_combobox_dropdown_rebuilds_in_the_new_palette(self) -> None:
+        app = self._app()
+        app.set_theme(theme.LIGHT)
+        combo = app.method_combo
+        # The dropdown listbox is only built on the first open; force that
+        # first open here instead of simulating a click.
+        combo.tk.call("ttk::combobox::PopdownWindow", combo)
+        app.update_idletasks()
+        self.assertEqual(
+            app.tk.call(combobox_listbox(app, combo), "cget", "-background"),
+            theme.PALETTES[theme.LIGHT]["FIELD"],
+        )
+
+        app.set_theme(theme.DARK)
+        app.update_idletasks()
+        # The stale popdown is gone, and the next open rebuilds it in the
+        # new palette.
+        self.assertFalse(combo.tk.call("winfo", "exists", f"{combo}.popdown"))
+        combo.tk.call("ttk::combobox::PopdownWindow", combo)
+        self.assertEqual(
+            app.tk.call(combobox_listbox(app, combo), "cget", "-background"),
+            theme.PALETTES[theme.DARK]["FIELD"],
+        )
+
+    def test_os_theme_poll_reschedules_at_the_platform_interval(self) -> None:
+        app = self._app()
+        # A non-system choice skips the detection, so only the reschedule
+        # is under test here.
+        app.theme_choice = theme.LIGHT
+        scheduled: dict[str, int] = {}
+        app.after = lambda ms, func=None: scheduled.setdefault("ms", ms)
+        app._watch_os_theme()
+        self.assertEqual(scheduled["ms"], theme.OS_THEME_POLL_MS)
+
+    def test_poll_interval_is_gentler_where_detection_spawns(self) -> None:
+        # Windows answers a registry read; the other platforms spawn a
+        # subprocess per check and must not do that every few seconds.
+        if sys.platform == "win32":
+            self.assertEqual(theme.OS_THEME_POLL_MS, 4000)
+        else:
+            self.assertGreater(theme.OS_THEME_POLL_MS, 4000)
+
 
 def gui_canvases(widget):
     from salestracker.ui import gui as gui_module
 
     return gui_module._descendant_canvases(widget)
+
+
+def combobox_listbox(app, combo):
+    """Path to the dropdown's plain Tk listbox, wherever this Tk buries it.
+
+    Tk 9 keeps it at `<combo>.popdown.l`, 8.6 at `<combo>.popdown.f.l`, and
+    the popdown is created by Tcl, so this hunts by widget class rather than
+    through Python's widget registry.
+    """
+
+    def hunt(path):
+        for child in app.tk.splitlist(app.tk.call("winfo", "children", path)):
+            if app.tk.call("winfo", "class", child) == "Listbox":
+                return str(child)
+            found = hunt(child)
+            if found:
+                return found
+        return None
+
+    found = hunt(f"{combo}.popdown")
+    if found is None:
+        raise AssertionError("the combobox popdown has no listbox")
+    return found
 
 
 def collect_radio_labels(widget):

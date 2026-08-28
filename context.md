@@ -5,13 +5,13 @@
 - App is a **SQLite ledger** with two entry points: interactive CLI
   (`sales_tracker.py`) and Tkinter UI (`gui.py`). Implementation lives in
   the `salestracker` package; root files are shims.
-- Tests: `python3 -m unittest test_sales_tracker.py` — 80 tests, green on
+- Tests: `python3 -m unittest test_sales_tracker.py` — 84 tests, green on
   Windows and Linux. Packaged build: `python3 tools/smoke_test.py`.
   Lint / types: **not configured**.
 - Frozen GUI: built by CI; `v*` tags attach Windows exe and Linux ELF to
   a GitHub Release. Binaries are not tracked in git.
 - Git: `j0nsh1n/sales-tracker` (private). Working branch
-  `fix/touchpad-scrolling`; `main` is at v0.1.2.
+  `fix/theme-repaint-gaps`; `main` is at v0.1.3.
 
 ## Repo Landmarks
 | Path | Role |
@@ -82,7 +82,11 @@ Product 1---* Order
   and the `done` row tag hold their own colour and are repainted by hand.
 - A readonly ttk Combobox draws from its state map, not `configure`, so
   dark mode needs `style.map` and the dropdown listbox needs
-  `option_add` — ttk cannot reach that listbox.
+  `option_add` — ttk cannot reach that listbox. The listbox is created by
+  Tcl on first open, so it is invisible to Python's widget registry: any
+  code that looks for it must go through `winfo`/Tcl calls, and
+  `_repaint` destroys built popdowns so the next open picks up the new
+  palette (Tk 8.6 and 9 both rebuild it on demand).
 - Wheel handling is ours, not Tk's, on every scrollable surface:
   `bind_wheel_scroll` on each list and one handler on each dialog
   toplevel for its panel. Deltas divide by 40.0; Tk 9 takes the fraction,
@@ -106,17 +110,20 @@ Product 1---* Order
   headless runners.
 
 ## Session Handoff
-- **Date:** 2026-08-27
-- **Branch:** main (PR #5 merged)
-- **Done:** v0.1.2 released, then touchpad scrolling fixed and cut as
-  0.1.3. Wheel handling is now ours on every scrollable surface rather
-  than Tk's, because Tk 8.6 rounds sub-notch deltas to zero.
-- **Verified:** 80 tests green on Windows and on CI; PR #5 passed tests,
-  windows-exe and linux-elf. Both scroll paths exercised by forcing the
-  fractional probe off.
+- **Date:** 2026-08-28
+- **Branch:** `fix/theme-repaint-gaps` (three commits on top of f5cfe0e)
+- **Done:** three code-review fixes. Theme switches now repaint the Money
+  dialog's hairline rules (dialogs keep a `_rules` list like the main
+  window) and discard built combobox dropdowns so they rebuild in the new
+  palette; the desktop-theme poll is 15s off Windows, 4s on Windows.
+- **Verified:** 84 tests green locally (Linux, Tk 9, Python 3.14.7), four
+  of them new: money-dialog rules repaint, dropdown rebuild, poll
+  scheduling, poll interval shape. Dropdown fix also checked by hand
+  (create / switch / recreate against Tk 9).
 - **Open:** the Wine path of the smoke test is still unrun. `v0.1.0`'s
   release notes should point users at a newer version, since its exe
   predates the launch fix. Coins not handled. Extra payment methods
   (zelle/card) need a spec line. History still holds 30 MB of old
-  binaries.
-- **Next:** nothing outstanding; 0.1.3 is the current release.
+  binaries. `docs/design/` remains untracked.
+- **Next:** review and merge `fix/theme-repaint-gaps`; 0.1.4 entries are
+  sitting under Unreleased in CHANGELOG.md.

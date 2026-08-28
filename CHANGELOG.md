@@ -81,6 +81,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A tracker whose startup failed kept the database write-locked for the rest
   of the process.
 
+## [0.1.4] - 2026-08-28
+
+### Fixed
+- Switching theme while the Money page was open left its separator rules in
+  the old colours until the dialog was reopened. Dialogs now register their
+  hairline rules, and a switch repaints them with everything else.
+- A "Paid by" dropdown that had been opened at least once kept the old
+  palette after a theme switch. The stale dropdown is discarded on a switch
+  and rebuilt from the new colours the next time it opens.
+- Following the desktop theme ran its check every four seconds on every
+  platform. Windows reads the registry and keeps four seconds; Linux and
+  macOS spawn a subprocess per check and now poll every fifteen.
+
 ## [0.1.3] - 2026-08-27
 
 ### Fixed

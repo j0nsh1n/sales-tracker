@@ -143,16 +143,39 @@ def bind_wheel_scroll(widget: tk.Misc, view: tk.Misc | None = None) -> None:
         widget.bind(sequence, handler)
 
 
-def _descendant_canvases(widget: tk.Misc) -> list[tk.Canvas]:
-    """Every Canvas under widget. These hold a colour ttk styles cannot set."""
-    found: list[tk.Canvas] = []
+def _descendants(widget: tk.Misc, cls: type) -> list:
+    """Every descendant of widget that is an instance of cls."""
+    found: list = []
     stack = list(widget.winfo_children())
     while stack:
         child = stack.pop()
-        if isinstance(child, tk.Canvas):
+        if isinstance(child, cls):
             found.append(child)
         stack.extend(child.winfo_children())
     return found
+
+
+def _descendant_canvases(widget: tk.Misc) -> list[tk.Canvas]:
+    """Every Canvas under widget. These hold a colour ttk styles cannot set."""
+    return _descendants(widget, tk.Canvas)
+
+
+def _drop_combobox_popdowns(widget: tk.Misc) -> None:
+    """Destroy every combobox dropdown list that was already built.
+
+    The dropdown is a plain Tk listbox ttk cannot restyle: it is born with
+    whatever the option database said the day it was first opened, so it
+    would keep the old palette after a switch. Tk 8.6 and 9 both rebuild the
+    popdown on demand once it is gone, so the next open reads the new
+    colours. One that was open at that moment simply closes.
+
+    The popdown is created by Tcl, not by this module, so it is invisible to
+    Python's widget registry: existence and destruction go through Tcl.
+    """
+    for combo in _descendants(widget, ttk.Combobox):
+        path = f"{combo}.popdown"
+        if combo.tk.call("winfo", "exists", path):
+            combo.tk.call("destroy", path)
 
 
 def center_on_parent(window: tk.Toplevel, parent: tk.Misc) -> None:
@@ -678,6 +701,9 @@ class MoneyDialog(tk.Toplevel):
         self.money = tracker.financials()
         self.var_counts: dict[int, tk.StringVar] = {}
         self.var_subtotals: dict[int, tk.StringVar] = {}
+        # Plain Tk hairlines below hold their own colour; SalesApp._repaint
+        # recolours whatever a toplevel lists here when the theme changes.
+        self._rules: list[tk.Frame] = []
         self.var_counted = tk.StringVar(value=format_money(Decimal("0.00")))
         self.var_expected = tk.StringVar(
             value=format_money(self.money.cash_collected)
@@ -713,6 +739,12 @@ class MoneyDialog(tk.Toplevel):
         self._recount()
         center_on_parent(self, master)
 
+    def _rule(self, parent: ttk.Frame, pady: int | tuple[int, int]) -> None:
+        """A hairline separator, registered so a theme switch recolours it."""
+        rule = tk.Frame(parent, bg=LINE, height=1)
+        rule.pack(fill="x", pady=pady)
+        self._rules.append(rule)
+
     # ------------------------------------------------------------- expected
 
     def _build_expected(self, parent: ttk.Frame) -> None:
@@ -734,7 +766,7 @@ class MoneyDialog(tk.Toplevel):
         )
         for label, amount, emphasis in rows:
             if label is None:
-                tk.Frame(box, bg=LINE, height=1).pack(fill="x", pady=8)
+                self._rule(box, pady=8)
                 continue
             line = ttk.Frame(box, style="Panel.TFrame")
             line.pack(fill="x", pady=2)
@@ -780,7 +812,7 @@ class MoneyDialog(tk.Toplevel):
                 row=row, column=2, sticky="e", pady=3
             )
 
-        tk.Frame(box, bg=LINE, height=1).pack(fill="x", pady=10)
+        self._rule(box, pady=10)
         total = ttk.Frame(box, style="Panel.TFrame")
         total.pack(fill="x")
         ttk.Label(total, text="COUNTED", style="Field.TLabel").pack(side="left")
@@ -794,7 +826,7 @@ class MoneyDialog(tk.Toplevel):
     def _build_verdict(self, parent: ttk.Frame) -> None:
         box = ttk.Frame(parent, style="Panel.TFrame")
         box.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(18, 0))
-        tk.Frame(box, bg=LINE, height=1).pack(fill="x", pady=(0, 12))
+        self._rule(box, pady=(0, 12))
 
         line = ttk.Frame(box, style="Panel.TFrame")
         line.pack(fill="x")
@@ -927,20 +959,26 @@ class SalesApp(tk.Tk):
         for window in self.winfo_children():
             if isinstance(window, tk.Toplevel):
                 window.configure(bg=PANEL)
+                # A dialog may keep its own hairline list (see MoneyDialog);
+                # its rules then need the same telling the main window's do.
+                for rule in getattr(window, "_rules", ()):
+                    rule.configure(bg=LINE)
             for canvas in _descendant_canvases(window):
                 canvas.configure(bg=PANEL)
+        _drop_combobox_popdowns(self)
         return self.theme_painted
 
     def _watch_os_theme(self) -> None:
         """Re-check the desktop theme while "System" is selected.
 
-        Tk has no notification for this, so it is a poll. Four seconds is far
-        below what anyone notices and the check is a single registry read.
+        Tk has no notification for this, so it is a poll, at the cadence in
+        theme.OS_THEME_POLL_MS: a Windows check reads the registry, while the
+        other platforms spawn a subprocess and are polled more gently.
         """
         if self.theme_choice == theme.SYSTEM:
             if theme.detect_os_theme() != self.theme_painted:
                 self._repaint()
-        self._theme_job = self.after(4000, self._watch_os_theme)
+        self._theme_job = self.after(theme.OS_THEME_POLL_MS, self._watch_os_theme)
 
     # ------------------------------------------------------------------ chrome
 
