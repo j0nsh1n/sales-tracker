@@ -1287,6 +1287,24 @@ class GuiThemeTests(unittest.TestCase):
             theme.PALETTES[theme.DARK]["FIELD"],
         )
 
+    def test_os_theme_poll_reschedules_at_the_platform_interval(self) -> None:
+        app = self._app()
+        # A non-system choice skips the detection, so only the reschedule
+        # is under test here.
+        app.theme_choice = theme.LIGHT
+        scheduled: dict[str, int] = {}
+        app.after = lambda ms, func=None: scheduled.setdefault("ms", ms)
+        app._watch_os_theme()
+        self.assertEqual(scheduled["ms"], theme.OS_THEME_POLL_MS)
+
+    def test_poll_interval_is_gentler_where_detection_spawns(self) -> None:
+        # Windows answers a registry read; the other platforms spawn a
+        # subprocess per check and must not do that every few seconds.
+        if sys.platform == "win32":
+            self.assertEqual(theme.OS_THEME_POLL_MS, 4000)
+        else:
+            self.assertGreater(theme.OS_THEME_POLL_MS, 4000)
+
 
 def gui_canvases(widget):
     from salestracker.ui import gui as gui_module

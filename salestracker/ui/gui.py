@@ -971,13 +971,14 @@ class SalesApp(tk.Tk):
     def _watch_os_theme(self) -> None:
         """Re-check the desktop theme while "System" is selected.
 
-        Tk has no notification for this, so it is a poll. Four seconds is far
-        below what anyone notices and the check is a single registry read.
+        Tk has no notification for this, so it is a poll, at the cadence in
+        theme.OS_THEME_POLL_MS: a Windows check reads the registry, while the
+        other platforms spawn a subprocess and are polled more gently.
         """
         if self.theme_choice == theme.SYSTEM:
             if theme.detect_os_theme() != self.theme_painted:
                 self._repaint()
-        self._theme_job = self.after(4000, self._watch_os_theme)
+        self._theme_job = self.after(theme.OS_THEME_POLL_MS, self._watch_os_theme)
 
     # ------------------------------------------------------------------ chrome
 
