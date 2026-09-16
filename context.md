@@ -10,8 +10,7 @@
   Lint / types: **not configured**.
 - Frozen GUI: built by CI; `v*` tags attach Windows exe and Linux ELF to
   a GitHub Release. Binaries are not tracked in git.
-- Git: `j0nsh1n/sales-tracker` (private). Working branch
-  `feat/new-product-button`; `main` is at v0.1.4.
+- Git: `j0nsh1n/sales-tracker` (private). On `main`, at v0.1.5.
 
 ## Repo Landmarks
 | Path | Role |
@@ -114,15 +113,15 @@ Product 1---* Order
 
 ## Session Handoff
 - **Date:** 2026-09-16
-- **Branch:** feat/new-product-button (PR #7, main merged in)
-- **Done:** added a New product button to the header. Adding a second
-  product previously needed Ctrl+N or the Ledger menu: the only button
-  for it belongs to the empty state and is swapped out once a product
-  exists.
-- **Verified:** 86 tests green on Windows. Checked by screenshot, and by
-  removing the button again to confirm the new tests fail with the
-  reported symptom (no wizard control among the visible buttons).
+- **Branch:** `main` (PR #7 merged, tagged v0.1.5)
+- **Done:** added a New product button to the header, released as 0.1.5.
+  Adding a second product previously needed Ctrl+N or the Ledger menu:
+  the only button for it belongs to the empty state and is swapped out
+  once a product exists.
+- **Verified:** 86 tests green locally and on the PR's CI (tests,
+  windows-exe, linux-elf). Checked by screenshot, and by removing the
+  button again to confirm the new tests fail with the reported symptom.
 - **Open:** the Wine path of the smoke test is still unrun. Coins not
   handled. Extra payment methods (zelle/card) need a spec line. History
   still holds 30 MB of old binaries. `docs/design/` remains untracked.
-- **Next:** merge PR #7, then tag v0.1.5.
+- **Next:** nothing outstanding; 0.1.5 is the current release.
