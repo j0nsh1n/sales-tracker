@@ -5,13 +5,13 @@
 - App is a **SQLite ledger** with two entry points: interactive CLI
   (`sales_tracker.py`) and Tkinter UI (`gui.py`). Implementation lives in
   the `salestracker` package; root files are shims.
-- Tests: `python3 -m unittest test_sales_tracker.py` — 80 tests, green on
+- Tests: `python3 -m unittest test_sales_tracker.py` — 82 tests, green on
   Windows and Linux. Packaged build: `python3 tools/smoke_test.py`.
   Lint / types: **not configured**.
 - Frozen GUI: built by CI; `v*` tags attach Windows exe and Linux ELF to
   a GitHub Release. Binaries are not tracked in git.
 - Git: `j0nsh1n/sales-tracker` (private). Working branch
-  `fix/touchpad-scrolling`; `main` is at v0.1.2.
+  `feat/new-product-button`; `main` is at v0.1.3.
 
 ## Repo Landmarks
 | Path | Role |
