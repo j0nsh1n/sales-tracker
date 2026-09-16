@@ -59,7 +59,10 @@ Product 1---* Order
   it alone because the spec's "reset everything" means products and
   orders. Legacy `sales` import is migration 0 → 1 (received starts at 0).
   Newer-than-code databases raise TrackerError.
-- GUI auto-opens the product wizard when the catalog is empty.
+- GUI auto-opens the product wizard when the catalog is empty. The
+  "Establish a product" button belongs to that empty state and disappears
+  with it, so the header carries its own New product button; without one
+  a second product needed Ctrl+N or the menu.
 - Settings reset requires typing RESET so it cannot be a stray click.
 - PyInstaller is build-only, not a runtime dependency. The pin is 6.22.2
   because 6.21.0 collects no Tcl/Tk data against Python 3.14 (Tcl/Tk 9
@@ -106,17 +109,17 @@ Product 1---* Order
   headless runners.
 
 ## Session Handoff
-- **Date:** 2026-08-27
-- **Branch:** main (PR #5 merged)
-- **Done:** v0.1.2 released, then touchpad scrolling fixed and cut as
-  0.1.3. Wheel handling is now ours on every scrollable surface rather
-  than Tk's, because Tk 8.6 rounds sub-notch deltas to zero.
-- **Verified:** 80 tests green on Windows and on CI; PR #5 passed tests,
-  windows-exe and linux-elf. Both scroll paths exercised by forcing the
-  fractional probe off.
-- **Open:** the Wine path of the smoke test is still unrun. `v0.1.0`'s
-  release notes should point users at a newer version, since its exe
-  predates the launch fix. Coins not handled. Extra payment methods
-  (zelle/card) need a spec line. History still holds 30 MB of old
-  binaries.
-- **Next:** nothing outstanding; 0.1.3 is the current release.
+- **Date:** 2026-09-16
+- **Branch:** feat/new-product-button
+- **Done:** Added a New product button to the header. Adding a second
+  product previously required Ctrl+N or the Ledger menu, because the only
+  button for it lives on the empty state and is swapped out once a product
+  exists.
+- **Verified:** 82 tests green on Windows. Confirmed by screenshot, and by
+  removing the button again to check the new tests fail with the exact
+  symptom (no wizard control among the visible buttons).
+- **Open:** not released; would be 0.1.4. The Wine path of the smoke test
+  is still unrun. `v0.1.0`'s release notes should point at a newer version,
+  since its exe predates the launch fix. Coins not handled. Extra payment
+  methods (zelle/card) need a spec line.
+- **Next:** decide whether to ship 0.1.4.

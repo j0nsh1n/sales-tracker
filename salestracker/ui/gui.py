@@ -1136,6 +1136,11 @@ class SalesApp(tk.Tk):
                    command=self.export_csv).pack(side="right", padx=(0, 8))
         ttk.Button(head, text="Money", style="Primary.TButton",
                    command=self.open_money).pack(side="right", padx=(0, 8))
+        # The only other way to reach the wizard is the button on the empty
+        # state, which is swapped out the moment a first product exists. This
+        # one stays, so a second product does not need the menu or Ctrl+N.
+        ttk.Button(head, text="New product", style="Ghost.TButton",
+                   command=self.open_wizard).pack(side="right", padx=(0, 8))
 
     def _build_entry(self) -> None:
         bar = ttk.Frame(self, style="Bar.TFrame", padding=(20, 12, 20, 10))
