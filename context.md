@@ -5,13 +5,13 @@
 - App is a **SQLite ledger** with two entry points: interactive CLI
   (`sales_tracker.py`) and Tkinter UI (`gui.py`). Implementation lives in
   the `salestracker` package; root files are shims.
-- Tests: `python3 -m unittest test_sales_tracker.py` — 82 tests, green on
+- Tests: `python3 -m unittest test_sales_tracker.py` — 86 tests, green on
   Windows and Linux. Packaged build: `python3 tools/smoke_test.py`.
   Lint / types: **not configured**.
 - Frozen GUI: built by CI; `v*` tags attach Windows exe and Linux ELF to
   a GitHub Release. Binaries are not tracked in git.
 - Git: `j0nsh1n/sales-tracker` (private). Working branch
-  `feat/new-product-button`; `main` is at v0.1.3.
+  `feat/new-product-button`; `main` is at v0.1.4.
 
 ## Repo Landmarks
 | Path | Role |
@@ -85,7 +85,11 @@ Product 1---* Order
   and the `done` row tag hold their own colour and are repainted by hand.
 - A readonly ttk Combobox draws from its state map, not `configure`, so
   dark mode needs `style.map` and the dropdown listbox needs
-  `option_add` — ttk cannot reach that listbox.
+  `option_add` — ttk cannot reach that listbox. The listbox is created by
+  Tcl on first open, so it is invisible to Python's widget registry: any
+  code that looks for it must go through `winfo`/Tcl calls, and
+  `_repaint` destroys built popdowns so the next open picks up the new
+  palette (Tk 8.6 and 9 both rebuild it on demand).
 - Wheel handling is ours, not Tk's, on every scrollable surface:
   `bind_wheel_scroll` on each list and one handler on each dialog
   toplevel for its panel. Deltas divide by 40.0; Tk 9 takes the fraction,
@@ -110,16 +114,15 @@ Product 1---* Order
 
 ## Session Handoff
 - **Date:** 2026-09-16
-- **Branch:** feat/new-product-button
-- **Done:** Added a New product button to the header. Adding a second
-  product previously required Ctrl+N or the Ledger menu, because the only
-  button for it lives on the empty state and is swapped out once a product
+- **Branch:** feat/new-product-button (PR #7, main merged in)
+- **Done:** added a New product button to the header. Adding a second
+  product previously needed Ctrl+N or the Ledger menu: the only button
+  for it belongs to the empty state and is swapped out once a product
   exists.
-- **Verified:** 82 tests green on Windows. Confirmed by screenshot, and by
-  removing the button again to check the new tests fail with the exact
-  symptom (no wizard control among the visible buttons).
-- **Open:** not released; would be 0.1.4. The Wine path of the smoke test
-  is still unrun. `v0.1.0`'s release notes should point at a newer version,
-  since its exe predates the launch fix. Coins not handled. Extra payment
-  methods (zelle/card) need a spec line.
-- **Next:** decide whether to ship 0.1.4.
+- **Verified:** 86 tests green on Windows. Checked by screenshot, and by
+  removing the button again to confirm the new tests fail with the
+  reported symptom (no wizard control among the visible buttons).
+- **Open:** the Wine path of the smoke test is still unrun. Coins not
+  handled. Extra payment methods (zelle/card) need a spec line. History
+  still holds 30 MB of old binaries. `docs/design/` remains untracked.
+- **Next:** merge PR #7, then tag v0.1.5.

@@ -75,6 +75,12 @@ def normalize_choice(value: object) -> str:
     return choice if choice in THEME_CHOICES else DEFAULT_CHOICE
 
 
+# How often the GUI re-asks the desktop while "System" is selected. Tk offers
+# no notification, so this is a poll: on Windows a check is one registry
+# read, but elsewhere it spawns a subprocess, which is kept off the fast lane.
+OS_THEME_POLL_MS = 4000 if os.name == "nt" else 15000
+
+
 def _windows_theme() -> str | None:
     try:
         import winreg
