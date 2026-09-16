@@ -1054,6 +1054,62 @@ class GuiPresentationTests(unittest.TestCase):
                     position, 0.0, f"a gesture of 8 events at delta {delta} moved nothing"
                 )
 
+    def _visible_buttons(self):
+        """Labels of every button currently on screen, in the main window."""
+        from tkinter import ttk
+
+        labels = []
+        stack = list(self.app.winfo_children())
+        while stack:
+            widget = stack.pop()
+            if isinstance(widget, ttk.Button) and widget.winfo_ismapped():
+                labels.append(str(widget.cget("text")))
+            stack.extend(widget.winfo_children())
+        return labels
+
+    def test_a_product_can_still_be_added_once_one_exists(self) -> None:
+        # The empty-state button is swapped out as soon as a product exists,
+        # which left the wizard reachable only by the menu or Ctrl+N.
+        self.app.refresh()
+        # A full update, not just update_idletasks: nothing reports itself
+        # mapped until the window has actually been laid out.
+        self.app.update()
+        self.assertTrue(
+            self.app.tracker.list_products(), "fixture should have a product"
+        )
+        labels = self._visible_buttons()
+        self.assertIn(
+            "New product",
+            labels,
+            "no visible control opens the product wizard; on screen: "
+            + repr(labels),
+        )
+
+    def test_the_new_product_button_opens_the_wizard(self) -> None:
+        from tkinter import ttk
+
+        from gui import ProductWizard
+
+        button = None
+        stack = list(self.app.winfo_children())
+        while stack:
+            widget = stack.pop()
+            if isinstance(widget, ttk.Button) and str(widget.cget("text")) == "New product":
+                button = widget
+                break
+            stack.extend(widget.winfo_children())
+        self.assertIsNotNone(button)
+        button.invoke()
+        self.app.update_idletasks()
+        wizards = [
+            child
+            for child in self.app.winfo_children()
+            if isinstance(child, ProductWizard)
+        ]
+        for wizard in wizards:
+            wizard.destroy()
+        self.assertEqual(len(wizards), 1, "the button did not open the wizard")
+
     def test_wheel_over_a_picker_moves_the_picker_not_the_panel(self) -> None:
         # One flick should move one thing. The panel's handler used to be
         # bound onto the picker as well, so a flick over the list moved the

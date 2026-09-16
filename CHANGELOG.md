@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- There was no way to add a second product without knowing the keyboard
+  shortcut. The "Establish a product" button sits on the empty state and
+  is swapped out for the order form as soon as the first product exists,
+  which left only Ctrl+N and the Ledger menu. A New product button now
+  sits in the header and stays there.
+
 ### Added
 - Project governance set: `agents.md`, `spec.md`, `roadmap.md`, `context.md`,
   `CHANGELOG.md`, short `README.md`, and `.gitignore`.

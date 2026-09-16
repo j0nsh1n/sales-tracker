@@ -5,12 +5,13 @@
 - App is a **SQLite ledger** with two entry points: interactive CLI
   (`sales_tracker.py`) and Tkinter UI (`gui.py`). Implementation lives in
   the `salestracker` package; root files are shims.
-- Tests: `python3 -m unittest test_sales_tracker.py` — 84 tests, green on
+- Tests: `python3 -m unittest test_sales_tracker.py` — 86 tests, green on
   Windows and Linux. Packaged build: `python3 tools/smoke_test.py`.
   Lint / types: **not configured**.
 - Frozen GUI: built by CI; `v*` tags attach Windows exe and Linux ELF to
   a GitHub Release. Binaries are not tracked in git.
-- Git: `j0nsh1n/sales-tracker` (private). On `main`, at v0.1.4.
+- Git: `j0nsh1n/sales-tracker` (private). Working branch
+  `feat/new-product-button`; `main` is at v0.1.4.
 
 ## Repo Landmarks
 | Path | Role |
@@ -58,7 +59,10 @@ Product 1---* Order
   it alone because the spec's "reset everything" means products and
   orders. Legacy `sales` import is migration 0 → 1 (received starts at 0).
   Newer-than-code databases raise TrackerError.
-- GUI auto-opens the product wizard when the catalog is empty.
+- GUI auto-opens the product wizard when the catalog is empty. The
+  "Establish a product" button belongs to that empty state and disappears
+  with it, so the header carries its own New product button; without one
+  a second product needed Ctrl+N or the menu.
 - Settings reset requires typing RESET so it cannot be a stray click.
 - PyInstaller is build-only, not a runtime dependency. The pin is 6.22.2
   because 6.21.0 collects no Tcl/Tk data against Python 3.14 (Tcl/Tk 9
@@ -109,20 +113,16 @@ Product 1---* Order
   headless runners.
 
 ## Session Handoff
-- **Date:** 2026-08-28
-- **Branch:** `main` (PR #6 merged, tagged v0.1.4)
-- **Done:** three code-review fixes released as 0.1.4. Theme switches now
-  repaint the Money dialog's hairline rules (dialogs keep a `_rules` list
-  like the main window) and discard built combobox dropdowns so they
-  rebuild in the new palette; the desktop-theme poll is 15s off Windows,
-  4s on Windows. v0.1.0's release notes now warn that its exe predates the
-  launch fix.
-- **Verified:** 84 tests green on the PR's CI (tests, windows-exe,
-  linux-elf all pass) and locally (Linux, Tk 9, Python 3.14.7); four new
-  tests cover the fixes. ELF also built and smoke-tested locally before
-  the PR; the v0.1.4 exe and ELF were smoke-tested by CI and are attached
-  to the GitHub Release with notes.
+- **Date:** 2026-09-16
+- **Branch:** feat/new-product-button (PR #7, main merged in)
+- **Done:** added a New product button to the header. Adding a second
+  product previously needed Ctrl+N or the Ledger menu: the only button
+  for it belongs to the empty state and is swapped out once a product
+  exists.
+- **Verified:** 86 tests green on Windows. Checked by screenshot, and by
+  removing the button again to confirm the new tests fail with the
+  reported symptom (no wizard control among the visible buttons).
 - **Open:** the Wine path of the smoke test is still unrun. Coins not
   handled. Extra payment methods (zelle/card) need a spec line. History
   still holds 30 MB of old binaries. `docs/design/` remains untracked.
-- **Next:** nothing outstanding; 0.1.4 is the current release.
+- **Next:** merge PR #7, then tag v0.1.5.
