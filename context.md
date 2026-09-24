@@ -11,7 +11,7 @@
   Lint / types: **not configured**.
 - Frozen GUI: built by CI; `v*` tags attach Windows exe and Linux ELF to
   a GitHub Release. Binaries are not tracked in git.
-- Git: `j0nsh1n/sales-tracker` (private). On `main`, at v0.1.5.
+- Git: `j0nsh1n/sales-tracker` (private). Branch is cut for v0.2.0.
 
 ## Repo Landmarks
 | Path | Role |
@@ -169,5 +169,6 @@ Product 1---* Order
   Buyers page kept although neither chosen direction had it. Windows exe
   not rebuilt locally; CI builds it. Coins, zelle/card, history binaries
   as before.
-- **Next:** bump `_version.py` to 0.2.0 and tag `v0.2.0` after merge so
-  the first manifest is published; review the branch first.
+- **Next:** `_version.py` is 0.2.0 and CHANGELOG is cut. Merge the PR,
+  then tag `v0.2.0` on main: CI checks the tag against the version and
+  attaches the binaries and `update.json` to the release.
