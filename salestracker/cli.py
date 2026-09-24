@@ -21,8 +21,10 @@ from salestracker.models import (
     format_payment_method,
     format_qty,
 )
+from salestracker._version import __version__
 from salestracker.finance import DENOMINATIONS, count_cash, reconcile
 from salestracker.store import SalesTracker
+from salestracker.update import Updater, target_path
 
 PromptFn = Callable[[str], str]
 WriteFn = Callable[[str], None]
@@ -597,6 +599,17 @@ def build_parser() -> argparse.ArgumentParser:
     export = sub.add_parser("export", help="Write every order plus totals to CSV")
     export.add_argument("--out", required=True, help="Path of the CSV to write")
 
+    update = sub.add_parser(
+        "update", help="Check for a newer packaged build, or install it"
+    )
+    update.add_argument(
+        "--source",
+        help="Where releases are published: github:owner/repo, a URL, or a "
+             "folder. Remembered for next time.",
+    )
+    update.add_argument("--install", action="store_true", help="Install a newer build")
+    update.add_argument("--yes", action="store_true", help="Confirm the install")
+
     sub.add_parser("interactive", help="Menu-driven session")
     return parser
 
@@ -744,6 +757,32 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     product = tracker.delete_product(args.id)
                     print(f"Deleted product #{product.id} ({product.name}).")
+            elif args.command == "update":
+                updater = Updater(__version__, tracker.get_setting, tracker.set_setting)
+                if args.source:
+                    updater.set_source(args.source)
+                release = updater.check()
+                print(f"You have {__version__}. Latest at {updater.source_text}: "
+                      f"{release.version}"
+                      + (f" ({release.published})" if release.published else "") + ".")
+                if not updater.available(release):
+                    print("Up to date.")
+                elif not args.install:
+                    print(f"Version {release.version} is available. "
+                          "Run `update --install --yes` to install it.")
+                else:
+                    if not args.yes:
+                        raise TrackerError("Install refused: pass --yes to confirm.")
+                    target = target_path()
+                    if target is None:
+                        raise TrackerError(
+                            "Updates install into the packaged build only. From a "
+                            "source checkout, pull the repository instead."
+                        )
+                    fresh = updater.download(release, target.parent)
+                    updater.install(fresh, target)
+                    print(f"Installed {release.version} at {target}. Start it again to "
+                          f"use it; the previous build is kept as {target.name}.old.")
             elif args.command == "reset":
                 if not args.yes:
                     raise TrackerError("Reset refused: pass --yes to confirm.")

@@ -15,6 +15,9 @@ still due. Monospace is reserved for figures.
 from __future__ import annotations
 
 import argparse
+import queue
+import subprocess
+import threading
 import tkinter as tk
 import tkinter.font as tkfont
 from datetime import datetime
@@ -41,6 +44,8 @@ from salestracker import (
 )
 from tkinter import filedialog
 
+from salestracker import update
+from salestracker._version import __version__
 from salestracker.ui import theme
 
 # Neutral surfaces, one accent, monospace reserved for figures. The values
@@ -422,6 +427,86 @@ class ProductWizard(tk.Toplevel):
         self.destroy()
 
 
+class UpdateController:
+    """The app's view of the updater: one check or install at a time, run
+    off the Tk thread, with the result handed back through ``after``."""
+
+    def __init__(self, app: tk.Tk, tracker: SalesTracker) -> None:
+        self.app = app
+        self.updater = update.Updater(__version__, tracker.get_setting, tracker.set_setting)
+        self.release: update.Release | None = None
+        self.busy = False
+        self.listeners: list = []
+
+    @property
+    def available(self) -> bool:
+        return self.release is not None and self.updater.available(self.release)
+
+    def _run(self, work, done, *, sync: bool = False) -> None:
+        """Run work() and call done(kind, value) with ("ok", result) or
+        ("error", exception). sync runs it in place, for tests."""
+        if self.busy:
+            return
+        self.busy = True
+
+        def finish(kind, value):
+            self.busy = False
+            done(kind, value)
+
+        if sync:
+            try:
+                result = work()
+            except Exception as exc:  # reported, not raised: it is the operator's message
+                finish("error", exc)
+                return
+            finish("ok", result)
+            return
+        box: queue.Queue = queue.Queue()
+
+        def job() -> None:
+            try:
+                box.put(("ok", work()))
+            except Exception as exc:
+                box.put(("error", exc))
+
+        threading.Thread(target=job, daemon=True).start()
+
+        def poll() -> None:
+            try:
+                kind, value = box.get_nowait()
+            except queue.Empty:
+                self.app.after(150, poll)
+                return
+            finish(kind, value)
+
+        self.app.after(150, poll)
+
+    def check(self, done, *, sync: bool = False) -> None:
+        def work():
+            self.release = self.updater.check()
+            return self.release
+        self._run(work, done, sync=sync)
+
+    def install(self, done, *, sync: bool = False) -> None:
+        release = self.release
+
+        def work():
+            target = update.target_path()
+            if target is None:
+                raise update.UpdateError(
+                    "Updates install into the packaged build only. From a source "
+                    "checkout, pull the repository instead."
+                )
+            fresh = self.updater.download(release, target.parent)
+            return self.updater.install(fresh, target)
+        self._run(work, done, sync=sync)
+
+    @staticmethod
+    def relaunch(target) -> None:
+        """Start the installed binary; the caller closes this window."""
+        subprocess.Popen([str(target)], cwd=str(target.parent))
+
+
 class SettingsDialog(tk.Toplevel):
     """The only place orders and products can be removed."""
 
@@ -473,6 +558,8 @@ class SettingsDialog(tk.Toplevel):
         ttk.Label(pad, text=str(tracker.db_path), style="Hint.TLabel", wraplength=560).pack(
             anchor="w", pady=(2, 16)
         )
+
+        self._build_updates(pad)
 
         ttk.Label(pad, text="UNLOCK", style="Field.TLabel").pack(anchor="w")
         ttk.Label(
@@ -539,6 +626,151 @@ class SettingsDialog(tk.Toplevel):
         self.bind("<Escape>", lambda _e: self.destroy())
         self._reload()
         center_on_parent(self, master)
+
+    # ---------------------------------------------------------------- updates
+
+    def _build_updates(self, pad: ttk.Frame) -> None:
+        ttk.Label(pad, text="UPDATES", style="Field.TLabel").pack(anchor="w")
+        ttk.Label(
+            pad,
+            text="Where releases are published: github:owner/repo, a web address, "
+                 "or a folder. A private repository needs a token; it is kept in "
+                 "this ledger file only. Nothing from the ledger is ever sent.",
+            style="Hint.TLabel", wraplength=560,
+        ).pack(anchor="w", pady=(2, 6))
+        self.updates = getattr(self.app, "updates", None)
+        if self.updates is None:
+            self.updates = UpdateController(self.app, self.tracker)
+        updater = self.updates.updater
+        self.var_update_source = tk.StringVar(value=updater.source_text)
+        self.var_update_token = tk.StringVar(value=self.tracker.get_setting(
+            update.SETTING_TOKEN, ""))
+        self.var_update_status = tk.StringVar()
+
+        row = ttk.Frame(pad, style="Panel.TFrame")
+        row.pack(fill="x")
+        ttk.Entry(row, textvariable=self.var_update_source, style="Ticket.TEntry").pack(
+            side="left", fill="x", expand=True, ipady=2
+        )
+        self.check_button = ttk.Button(row, text="Check now", style="Ghost.TButton",
+                                       command=self._check_updates)
+        self.check_button.pack(side="left", padx=(8, 0))
+        row = ttk.Frame(pad, style="Panel.TFrame")
+        row.pack(fill="x", pady=(6, 0))
+        ttk.Label(row, text="Token", style="Hint.TLabel").pack(side="left", padx=(0, 8))
+        ttk.Entry(row, textvariable=self.var_update_token, style="Ticket.TEntry",
+                  show="\u2022").pack(side="left", fill="x", expand=True, ipady=2)
+        self.update_status = ttk.Label(pad, textvariable=self.var_update_status,
+                                       style="Hint.TLabel", wraplength=560)
+        self.update_status.pack(anchor="w", pady=(8, 6))
+        row = ttk.Frame(pad, style="Panel.TFrame")
+        row.pack(fill="x", pady=(0, 16))
+        self.install_button = ttk.Button(row, text="Install and restart",
+                                         style="Primary.TButton", command=self._install_update)
+        self.install_button.pack(side="left")
+        self.restore_button = ttk.Button(row, text="Restore previous version",
+                                         style="Ghost.TButton", command=self._restore_previous)
+        self.restore_button.pack(side="left", padx=(8, 0))
+        self._sync_update_buttons()
+
+    def _sync_update_buttons(self) -> None:
+        release = self.updates.release
+        if self.updates.busy:
+            text = self.var_update_status.get()
+        elif release is None:
+            last = self.updates.updater.last_check()
+            text = f"You have {__version__}." + (
+                f"  Last checked {friendly_stamp(last.isoformat())}." if last else
+                "  Not checked yet."
+            )
+        elif self.updates.available:
+            text = (f"You have {__version__}. Version {release.version} is available"
+                    + (f", published {release.published}" if release.published else "")
+                    + ".")
+            if release.notes:
+                text += "\n" + release.notes.strip().splitlines()[0]
+        else:
+            text = f"You have {__version__}, the latest at {self.updates.updater.source_text}."
+        self.var_update_status.set(text)
+        self.update_status.configure(style="Hint.TLabel")
+        self.install_button.state(["!disabled"] if self.updates.available and not self.updates.busy
+                                  else ["disabled"])
+        self.restore_button.state(["!disabled"] if update.Updater.previous() else ["disabled"])
+        self.check_button.state(["disabled"] if self.updates.busy else ["!disabled"])
+
+    def _update_failed(self, exc: Exception) -> None:
+        self.var_update_status.set(str(exc))
+        self.update_status.configure(style="Error.TLabel")
+        self.install_button.state(["disabled"])
+        self.check_button.state(["!disabled"])
+
+    def _check_updates(self, sync: bool = False) -> None:
+        try:
+            self.updates.updater.set_source(self.var_update_source.get())
+        except TrackerError as exc:
+            self._update_failed(exc)
+            return
+        self.updates.updater.set_token(self.var_update_token.get())
+        self.var_update_status.set("Checking\u2026")
+        self.update_status.configure(style="Hint.TLabel")
+        self.check_button.state(["disabled"])
+
+        def done(kind, value):
+            if not self.winfo_exists():
+                return
+            if kind == "error":
+                self._update_failed(value)
+            else:
+                self._sync_update_buttons()
+        self.updates.check(done, sync=sync)
+
+    def _install_update(self, sync: bool = False) -> None:
+        release = self.updates.release
+        if release is None or not self.updates.available:
+            return
+        if not messagebox.askyesno(
+            "Install update",
+            f"Install version {release.version}? Sales Tracker will close and start "
+            "again. The version you have now is kept, and can be restored from here.",
+            parent=self,
+        ):
+            return
+        self.var_update_status.set(f"Downloading version {release.version}\u2026")
+        self.update_status.configure(style="Hint.TLabel")
+        self.install_button.state(["disabled"])
+        self.check_button.state(["disabled"])
+
+        def done(kind, value):
+            if not self.winfo_exists():
+                return
+            if kind == "error":
+                self._update_failed(value)
+                return
+            messagebox.showinfo(
+                "Update installed",
+                f"Version {release.version} is installed. Sales Tracker will now restart.",
+                parent=self,
+            )
+            self.updates.relaunch(value)
+            self.app._on_close()
+        self.updates.install(done, sync=sync)
+
+    def _restore_previous(self) -> None:
+        if not messagebox.askyesno(
+            "Restore previous version",
+            "Go back to the previous build? Sales Tracker will close and start again.",
+            parent=self,
+        ):
+            return
+        try:
+            target = update.Updater.restore_previous()
+        except TrackerError as exc:
+            self._update_failed(exc)
+            return
+        messagebox.showinfo("Restored", "The previous build is back. Sales Tracker will "
+                            "now restart.", parent=self)
+        self.updates.relaunch(target)
+        self.app._on_close()
 
     def _change_theme(self) -> None:
         """Repaint immediately; the main window persists the choice."""
@@ -1219,6 +1451,7 @@ class SalesApp(tk.Tk):
         self.log_dialog: LogSaleDialog | None = None
         self.product_combo: ttk.Combobox | None = None
         self.method_combo: ttk.Combobox | None = None
+        self.updates = UpdateController(self, self.tracker)
 
         # Paint before any widget is built, so nothing is created in the
         # outgoing theme's colours.
@@ -1244,6 +1477,10 @@ class SalesApp(tk.Tk):
         self._watch_os_theme()
         if self._auto_setup:
             self.after(200, self._maybe_prompt_product)
+            # A packaged build looks for a newer release once a day, quietly:
+            # the answer is a line in the status bar, never a dialog.
+            if update.target_path() is not None and self.updates.updater.due():
+                self.after(2500, self.check_updates_quietly)
 
     # ------------------------------------------------------------------- theme
 
@@ -1606,6 +1843,7 @@ class SalesApp(tk.Tk):
         self.var_method = tk.StringVar(value=format_payment_method(CASH))
         self.var_error = tk.StringVar()
         self.var_ok = tk.StringVar()
+        self.var_notice = tk.StringVar()
         self.var_hint = tk.StringVar()
         self.var_search = tk.StringVar()
         self.var_filter = tk.StringVar(value="all")
@@ -1765,6 +2003,10 @@ class SalesApp(tk.Tk):
         ttk.Label(bar, textvariable=self.var_hint, style="PageHint.TLabel").pack(
             side="right"
         )
+        notice = ttk.Label(bar, textvariable=self.var_notice, style="PageOk.TLabel",
+                           cursor="hand2")
+        notice.pack(side="right", padx=(0, 18))
+        notice.bind("<Button-1>", lambda _e: self.open_settings())
 
     def _page_frame(self, key: str, title: str) -> tuple[ttk.Frame, ttk.Frame]:
         page = ttk.Frame(self.content, style="Page.TFrame", padding=(28, 22, 28, 6))
@@ -2578,6 +2820,15 @@ class SalesApp(tk.Tk):
 
     def open_settings(self) -> None:
         SettingsDialog(self, self.tracker, on_change=self.refresh)
+
+    def check_updates_quietly(self, *, sync: bool = False) -> None:
+        """Look for a newer release; say so in the status bar if there is one."""
+        def done(kind, value):
+            if kind == "ok" and self.updates.available:
+                self.var_notice.set(
+                    f"Version {value.version} is available  \u00b7  Settings \u2192 Updates"
+                )
+        self.updates.check(done, sync=sync)
 
     def open_money(self) -> None:
         self.show_page("money")

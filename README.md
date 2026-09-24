@@ -82,6 +82,19 @@ Linux ELF from the
 `sales.db` is created next to the binary. A tag matching `v*` (for example
 `v0.1.0`) builds both targets and attaches them to that release.
 
+**Updating** a packaged build: the app looks for a newer release once a day
+and says so in the status bar. Settings → Updates has **Check now** and
+**Install and restart**; the version you had is kept and **Restore previous
+version** brings it back. From the command line: `python3 sales_tracker.py
+update` to check, `update --install --yes` to install. Releases come from
+GitHub by default (`github:j0nsh1n/sales-tracker`). A private repository needs
+a token (paste it in Settings, or set `SALES_TRACKER_UPDATE_TOKEN`); the
+token stays in your `sales.db`. If GitHub is out of reach, point the source
+at any web address or a folder that holds `update.json` and the binaries;
+`python3 -m salestracker.update write-manifest --version v0.2.0 dist/…`
+writes that manifest. Every download is checked against the manifest's size
+and SHA-256 before it is installed.
+
 Rebuild:
 
 ```bash

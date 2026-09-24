@@ -5,7 +5,7 @@
 - App is a **SQLite ledger** with two entry points: interactive CLI
   (`sales_tracker.py`) and Tkinter UI (`gui.py`). Implementation lives in
   the `salestracker` package; root files are shims.
-- Tests: `python3 -m unittest test_sales_tracker.py` — 128 tests, green on
+- Tests: `python3 -m unittest test_sales_tracker.py` — 149 tests, green on
   Linux (cloud container, 3.14 via `uv python install 3.14`, GUI under
   `xvfb-run`). Packaged build: `python3 tools/smoke_test.py`.
   Lint / types: **not configured**.
@@ -16,7 +16,7 @@
 ## Repo Landmarks
 | Path | Role |
 |------|------|
-| `salestracker/` | models, store, cli, `ui/gui.py` |
+| `salestracker/` | models, store, cli, `update.py` (self-update protocol), `_version.py`, `ui/gui.py` |
 | `sales_tracker.py` | Thin CLI shim |
 | `gui.py` | Thin GUI shim |
 | `test_sales_tracker.py` | unittest for library, CLI, interactive session, GUI |
@@ -120,6 +120,17 @@ Product 1---* Order
   a price therefore reprices every order for it, collected money included,
   which moves the Money page's cash-collected figure. Both UIs confirm first
   via `price_change_warning()`; the store itself does not refuse.
+- Updates: `update.json` beside each release is the protocol; sources are
+  `github:owner/repo`, a URL, or a folder (`resolve_source`). The GitHub
+  default reads the `releases/latest/download/` redirect, not the API, so
+  unauthenticated checks are not rate-limited; a private repo needs a
+  token and goes through the API, where asset downloads redirect to a
+  storage host that rejects the token (`_NoTokenAcrossHosts` strips it).
+  Install is a rename of the running binary to `.old` plus a rename of
+  the download, which Windows and Linux both allow; the Windows path is
+  reasoned about, not run here. CI attaches `update.json` in a
+  `release-manifest` job and refuses a `v*` tag that differs from
+  `_version.py`.
 - Payment methods are capitalised for display only. The ledger, the CSV,
   and the CLI's accepted input all stay lowercase.
 - Linux frozen binary was built natively here; Windows exe was Wine + CI.
@@ -140,17 +151,23 @@ Product 1---* Order
 - **Branch:** `claude/loving-sagan-cstbui` (from `main` at v0.1.5)
 - **Done:** (1) edit orders and products. (2) Sidebar redesign. (3) Four
   UI directions prototyped in `docs/explorations/`; the human chose A
-  (Counter) as the main page with B (Register) as a Details page, and
-  that is now implemented: the Orders page and its inspector are replaced
-  by Counter cards with a hand-over stepper and a Log a sale dialog, and
-  a new Details page carries the grid, command line, in-place received
-  editor and keyboard shortcuts. spec.md's GUI description updated.
-- **Verified:** 128 tests green under xvfb on 3.14 (uv); Counter and
+  (Counter) as the main page with B (Register) as a Details page, now
+  implemented. (4) Self-update protocol (`salestracker/update.py`):
+  manifest, three source kinds, ETag cache, daily quiet check, verified
+  download, rename-swap install with restore; Settings → Updates, CLI
+  `update`, CI manifest job and tag/version check. spec.md gained an
+  Updates bullet and exceptions to "no external services" and "no network
+  auth", at the human's request this session.
+- **Verified:** 149 tests green under xvfb on 3.14 (uv); Counter and
   Details checked by screenshot in light and dark at 1260x800 and at the
   minimum 1180x700, including the card and cell error states. Linux
   onefile rebuilt and `tools/smoke_test.py` passed.
-- **Open:** price is not snapshotted per order (repricing warned about,
-  not prevented). Buyers page kept although neither chosen direction had
-  it; drop it if unwanted. Windows exe not rebuilt locally; CI builds it.
-  Coins, zelle/card, history binaries as before.
-- **Next:** review the branch (CI builds both targets), then merge.
+- **Open:** the updater's Windows rename path and the real GitHub path
+  are untested here (no Windows, and no release carries `update.json`
+  yet; the first tagged release after this merge will). Downloads are
+  read into memory, fine at ~17 MB. Price is not snapshotted per order.
+  Buyers page kept although neither chosen direction had it. Windows exe
+  not rebuilt locally; CI builds it. Coins, zelle/card, history binaries
+  as before.
+- **Next:** bump `_version.py` to 0.2.0 and tag `v0.2.0` after merge so
+  the first manifest is published; review the branch first.

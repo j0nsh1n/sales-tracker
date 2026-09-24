@@ -30,6 +30,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   pushed off the bottom of shorter windows.
 
 ### Added
+- The packaged build updates itself. It checks for a newer release once a
+  day and says so in the status bar; Settings → Updates has Check now,
+  Install and restart, and Restore previous version. The CLI has `update`
+  and `update --install --yes`. Releases come from GitHub by default; a
+  private repository takes a token, and the source can instead be any web
+  address or a folder, so an update can be handed over on a USB stick.
+  Downloads are installed only if their size and SHA-256 match the
+  release's `update.json`, which CI now attaches to every release.
 - Orders and products can be edited after they are saved. Edit order and
   Edit product sit beside the list filters, in the Ledger menu, and Ctrl+E
   edits the selected order. An order's purchaser, quantity, product, and

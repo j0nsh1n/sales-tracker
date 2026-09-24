@@ -27,6 +27,18 @@ jobs:
       - name: Run tests
         run: xvfb-run -a python -m unittest test_sales_tracker -v
 
+      # The updater compares the manifest's version with __version__, so a
+      # release whose tag disagrees with the code would never be offered.
+      - name: Check the tag matches __version__
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          python - <<'EOF'
+          import os, sys, salestracker
+          tag = os.environ["GITHUB_REF_NAME"].lstrip("v")
+          if tag != salestracker.__version__:
+              sys.exit(f"tag {tag} does not match __version__ {salestracker.__version__}")
+          EOF
+
   windows-exe:
     needs: tests
     runs-on: windows-latest
@@ -104,3 +116,40 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/SalesTracker-linux-x86_64
+
+  # The update manifest: what the app's updater reads. It needs both
+  # binaries' checksums, so it runs after the two builds.
+  release-manifest:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows-exe, linux-elf]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: SalesTracker-windows
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: SalesTracker-linux
+          path: dist
+
+      - name: Write update.json
+        run: |
+          python -m salestracker.update write-manifest \
+            --version "$GITHUB_REF_NAME" \
+            --base-url "https://github.com/${{ github.repository }}/releases/download/$GITHUB_REF_NAME/" \
+            --notes-from CHANGELOG.md \
+            dist/SalesTracker.exe dist/SalesTracker-linux-x86_64 > update.json
+          cat update.json
+
+      - name: Attach update.json to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: update.json

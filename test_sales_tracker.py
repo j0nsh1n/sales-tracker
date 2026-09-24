@@ -6,13 +6,17 @@ from __future__ import annotations
 import ast
 import csv
 import io
+import json
+import os
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import textwrap
 import unittest
+from datetime import datetime
 from decimal import Decimal
+from functools import partial
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1732,6 +1736,388 @@ def _labels(widget):
 
 def _mapped_label_texts(widget):
     return [str(w.cget("text")) for w in _labels(widget) if w.winfo_ismapped()]
+
+
+
+class UpdateProtocolTests(unittest.TestCase):
+    """The update manifest, sources, checking, verifying and installing."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.settings: dict[str, str] = {}
+
+    def _updater(self, fetch=None, version="0.1.5", now=None, platform="linux-x86_64"):
+        from salestracker.update import Updater
+
+        return Updater(
+            version,
+            lambda key, default="": self.settings.get(key, default),
+            lambda key, value: self.settings.__setitem__(key, value) or value,
+            fetch=fetch or (lambda *a, **k: self.fail("unexpected fetch")),
+            now=now or datetime.now,
+            platform=platform,
+        )
+
+    def _publish(self, folder: Path, version: str = "0.2.0") -> Path:
+        """A release folder: two fake binaries and their manifest."""
+        from salestracker.update import write_manifest
+
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "SalesTracker.exe").write_bytes(b"MZ windows build " + version.encode())
+        (folder / "SalesTracker-linux-x86_64").write_bytes(b"\x7fELF linux build " + version.encode())
+        text = write_manifest(
+            [folder / "SalesTracker.exe", folder / "SalesTracker-linux-x86_64"],
+            version, "", notes="Fixes and things.",
+        )
+        (folder / "update.json").write_text(text, encoding="utf-8")
+        return folder
+
+    def test_versions_compare_numerically(self) -> None:
+        from salestracker.update import UpdateError, is_newer, parse_version
+
+        self.assertEqual(parse_version("v0.2.0"), (0, 2, 0))
+        self.assertTrue(is_newer("0.10.0", "0.9.9"))
+        self.assertFalse(is_newer("0.1.5", "0.1.5"))
+        self.assertFalse(is_newer("v0.1.4", "0.1.5"))
+        with self.assertRaises(UpdateError):
+            parse_version("latest")
+
+    def test_release_file_names_map_to_platforms(self) -> None:
+        from salestracker.update import asset_key_for_name
+
+        self.assertEqual(asset_key_for_name("SalesTracker.exe"), "windows-x86_64")
+        self.assertEqual(asset_key_for_name("SalesTracker-linux-x86_64"), "linux-x86_64")
+        self.assertIsNone(asset_key_for_name("update.json"))
+
+    def test_manifest_round_trips_with_checksums(self) -> None:
+        from salestracker.update import parse_manifest, sha256_of
+
+        folder = self._publish(self.root / "rel", "0.3.0")
+        release = parse_manifest((folder / "update.json").read_text())
+        self.assertEqual(release.version, "0.3.0")
+        self.assertEqual(release.notes, "Fixes and things.")
+        linux = release.asset_for("linux-x86_64")
+        self.assertEqual(linux.name, "SalesTracker-linux-x86_64")
+        self.assertEqual(linux.size, (folder / linux.name).stat().st_size)
+        self.assertEqual(linux.sha256, sha256_of(folder / linux.name))
+        with self.assertRaisesRegex(TrackerError, "no build for this platform"):
+            release.asset_for("macos-arm64")
+
+    def test_manifest_rejects_junk(self) -> None:
+        from salestracker.update import UpdateError, parse_manifest
+
+        for text in ("not json", "[]", '{"notes": "x"}', '{"version": "1.0", "assets": {"linux-x86_64": {"name": "a"}}}'):
+            with self.subTest(text=text), self.assertRaises(UpdateError):
+                parse_manifest(text)
+
+    def test_changelog_notes_take_one_section(self) -> None:
+        from salestracker.update import changelog_notes
+
+        text = "# Changelog\n\n## [Unreleased]\n- later\n\n## [0.2.0] - 2026-10-01\n\n### Added\n- Updates.\n\n## [0.1.5] - 2026-09-16\n- old\n"
+        self.assertEqual(changelog_notes(text, "0.2.0"), "### Added\n- Updates.")
+        self.assertEqual(changelog_notes(text, "0.0.1"), "")
+
+    def test_sources_resolve_to_a_manifest_and_a_base(self) -> None:
+        from salestracker.update import UpdateError, resolve_asset_url, resolve_source
+
+        github = resolve_source(None)
+        self.assertEqual(github.kind, "github")
+        self.assertEqual(github.owner, "j0nsh1n")
+        self.assertTrue(github.manifest.endswith("/releases/latest/download/update.json"))
+        url = resolve_source("https://example.org/releases")
+        self.assertEqual(url.manifest, "https://example.org/releases/update.json")
+        self.assertEqual(resolve_asset_url(url, "SalesTracker.exe"),
+                         "https://example.org/releases/SalesTracker.exe")
+        self.assertEqual(resolve_asset_url(url, "https://cdn.example.org/x"),
+                         "https://cdn.example.org/x")
+        direct = resolve_source("https://example.org/feed/latest.json")
+        self.assertEqual(direct.manifest, "https://example.org/feed/latest.json")
+        self.assertEqual(direct.base, "https://example.org/feed/")
+        folder = resolve_source(str(self.root))
+        self.assertEqual(folder.kind, "folder")
+        self.assertEqual(Path(folder.manifest), self.root / "update.json")
+        self.assertEqual(resolve_asset_url(folder, "SalesTracker.exe"),
+                         str(self.root / "SalesTracker.exe"))
+        with self.assertRaises(UpdateError):
+            resolve_source("github:nope")
+
+    def test_check_from_a_folder_reports_a_newer_version(self) -> None:
+        folder = self._publish(self.root / "rel", "0.2.0")
+        updater = self._updater()
+        updater.set_source(str(folder))
+        release = updater.check()
+        self.assertEqual(release.version, "0.2.0")
+        self.assertTrue(updater.available(release))
+        self.assertIn("update_last_check", self.settings)
+        self.assertFalse(updater.due())
+
+    def test_check_is_due_once_a_day(self) -> None:
+        clock = {"now": datetime(2026, 10, 1, 9, 0)}
+        folder = self._publish(self.root / "rel")
+        updater = self._updater(now=lambda: clock["now"])
+        updater.set_source(str(folder))
+        self.assertTrue(updater.due())
+        updater.check()
+        clock["now"] = datetime(2026, 10, 1, 20, 0)
+        self.assertFalse(updater.due())
+        clock["now"] = datetime(2026, 10, 2, 9, 30)
+        self.assertTrue(updater.due())
+
+    def test_web_source_uses_the_etag_cache(self) -> None:
+        from salestracker.update import Response
+
+        folder = self._publish(self.root / "rel")
+        body = (folder / "update.json").read_bytes()
+        calls = []
+
+        def fetch(url, headers=None, timeout=20.0):
+            calls.append((url, dict(headers or {})))
+            if headers and headers.get("If-None-Match") == '"abc"':
+                return Response(304, {}, b"")
+            return Response(200, {"etag": '"abc"'}, body)
+
+        updater = self._updater(fetch=fetch)
+        updater.set_source("https://example.org/dl/")
+        first = updater.check()
+        second = updater.check()
+        self.assertEqual((first.version, second.version), ("0.2.0", "0.2.0"))
+        self.assertEqual(calls[0][0], "https://example.org/dl/update.json")
+        self.assertNotIn("If-None-Match", calls[0][1])
+        self.assertEqual(calls[1][1]["If-None-Match"], '"abc"')
+
+    def test_rate_limit_is_explained_not_crashed(self) -> None:
+        from salestracker.update import Response, UpdateError
+
+        reset = int(datetime(2026, 10, 1, 14, 30).timestamp())
+        updater = self._updater(fetch=lambda *a, **k: Response(
+            403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": str(reset)}, b""))
+        with self.assertRaisesRegex(UpdateError, "rate-limiting this address until 14:30"):
+            updater.check()
+
+    def test_private_repo_needs_a_token_and_then_uses_the_api(self) -> None:
+        from salestracker.update import Response, UpdateError
+
+        folder = self._publish(self.root / "rel")
+        manifest = (folder / "update.json").read_bytes()
+        listing = json.dumps({"assets": [
+            {"name": "update.json", "url": "https://api.github.com/repos/o/r/releases/assets/1"},
+            {"name": "SalesTracker-linux-x86_64", "url": "https://api.github.com/repos/o/r/releases/assets/2"},
+        ]}).encode()
+        calls = []
+
+        def fetch(url, headers=None, timeout=20.0):
+            calls.append((url, dict(headers or {})))
+            if url.endswith("/releases/latest/download/update.json"):
+                return Response(404, {}, b"")
+            if url.endswith("/releases/latest"):
+                return Response(200, {}, listing)
+            if url.endswith("/assets/1"):
+                self.assertEqual(headers["Accept"], "application/octet-stream")
+                return Response(200, {}, manifest)
+            if url.endswith("/assets/2"):
+                return Response(200, {}, (folder / "SalesTracker-linux-x86_64").read_bytes())
+            self.fail("unexpected url " + url)
+
+        updater = self._updater(fetch=fetch)
+        updater.set_source("github:o/r")
+        with self.assertRaisesRegex(UpdateError, "private, add a token"):
+            updater.check()
+        updater.set_token("ghp_secret")
+        release = updater.check()
+        self.assertEqual(release.version, "0.2.0")
+        self.assertTrue(all(h.get("Authorization") == "Bearer ghp_secret"
+                            for u, h in calls if "api.github.com" in u))
+        # The binary is fetched through its API url with the token.
+        fresh = updater.download(release, self.root / "into")
+        self.assertEqual(fresh.name, "SalesTracker-linux-x86_64.new")
+        self.assertEqual(calls[-1][0], "https://api.github.com/repos/o/r/releases/assets/2")
+        self.assertEqual(calls[-1][1]["Authorization"], "Bearer ghp_secret")
+
+    def test_token_is_dropped_on_a_redirect_to_another_host(self) -> None:
+        import urllib.request
+        from salestracker.update import _NoTokenAcrossHosts
+
+        handler = _NoTokenAcrossHosts()
+        request = urllib.request.Request(
+            "https://api.github.com/x", headers={"Authorization": "Bearer t", "Accept": "a"}
+        )
+        moved = handler.redirect_request(request, None, 302, "Found", {},
+                                         "https://objects.githubusercontent.com/y")
+        self.assertFalse(moved.has_header("Authorization"))
+        self.assertTrue(moved.has_header("Accept"))
+        same = handler.redirect_request(request, None, 302, "Found", {},
+                                        "https://api.github.com/z")
+        self.assertTrue(same.has_header("Authorization"))
+
+    def test_download_verifies_size_and_checksum(self) -> None:
+        from salestracker.update import UpdateError
+
+        folder = self._publish(self.root / "rel")
+        updater = self._updater()
+        updater.set_source(str(folder))
+        release = updater.check()
+        fresh = updater.download(release, self.root / "into")
+        self.assertTrue(fresh.exists())
+        # Tamper with the published file: the copy is refused and removed.
+        (folder / "SalesTracker-linux-x86_64").write_bytes(b"\x7fELF something else")
+        with self.assertRaisesRegex(UpdateError, "arrived incomplete"):
+            updater.download(release, self.root / "into2")
+        self.assertFalse((self.root / "into2" / "SalesTracker-linux-x86_64.new").exists())
+        (folder / "SalesTracker-linux-x86_64").write_bytes(b"\x7fELF linux build 0.2.X")
+        with self.assertRaisesRegex(UpdateError, "did not match its published checksum"):
+            updater.download(release, self.root / "into3")
+
+    def test_install_keeps_the_previous_build_and_can_restore_it(self) -> None:
+        from salestracker.update import UpdateError, Updater
+
+        target = self.root / "SalesTracker"
+        target.write_bytes(b"old build")
+        fresh = self.root / "SalesTracker.new"
+        fresh.write_bytes(b"new build")
+        self.assertIsNone(Updater.previous(target))
+        installed = Updater.install(fresh, target)
+        self.assertEqual(installed, target)
+        self.assertEqual(target.read_bytes(), b"new build")
+        self.assertEqual(Updater.previous(target).read_bytes(), b"old build")
+        self.assertFalse(fresh.exists())
+        if os.name != "nt":
+            self.assertTrue(os.access(target, os.X_OK))
+        Updater.restore_previous(target)
+        self.assertEqual(target.read_bytes(), b"old build")
+        self.assertEqual(Updater.previous(target).read_bytes(), b"new build")
+        # From a source checkout there is nothing to install into.
+        with self.assertRaisesRegex(UpdateError, "packaged build only"):
+            Updater.install(fresh, None)
+
+    def test_http_source_end_to_end(self) -> None:
+        import http.server
+        import threading
+        from salestracker.update import http_fetch
+
+        folder = self._publish(self.root / "www", "0.4.0")
+        handler = partial(http.server.SimpleHTTPRequestHandler, directory=str(folder))
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        server.RequestHandlerClass.log_message = lambda *a, **k: None
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        port = server.server_address[1]
+
+        updater = self._updater(fetch=http_fetch)
+        updater.set_source(f"http://127.0.0.1:{port}/")
+        release = updater.check()
+        self.assertEqual(release.version, "0.4.0")
+        fresh = updater.download(release, self.root / "got")
+        self.assertEqual(fresh.read_bytes(), (folder / "SalesTracker-linux-x86_64").read_bytes())
+        updater.set_source(f"http://127.0.0.1:{port}/missing/")
+        with self.assertRaisesRegex(TrackerError, "answered 404"):
+            updater.check()
+
+    def test_cli_update_reports_and_refuses_to_install_from_source(self) -> None:
+        folder = self._publish(self.root / "rel", "9.9.9")
+        db = str(self.root / "sales.db")
+        out = io.StringIO()
+        with patch("sys.stdout", out):
+            self.assertEqual(main(["--db", db, "update", "--source", str(folder)]), 0)
+        self.assertIn("Version 9.9.9 is available", out.getvalue())
+        # The source is remembered.
+        with SalesTracker(db) as tracker:
+            self.assertEqual(tracker.get_setting("update_source"), str(folder))
+        err = io.StringIO()
+        with patch("sys.stdout", io.StringIO()), patch("sys.stderr", err):
+            self.assertEqual(main(["--db", db, "update", "--install"]), 1)
+        self.assertIn("pass --yes", err.getvalue())
+        err = io.StringIO()
+        with patch("sys.stdout", io.StringIO()), patch("sys.stderr", err):
+            self.assertEqual(main(["--db", db, "update", "--install", "--yes"]), 1)
+        self.assertIn("packaged build only", err.getvalue())
+
+    def test_manifest_tool_prints_json(self) -> None:
+        from salestracker.update import main as update_main
+
+        folder = self._publish(self.root / "rel")
+        out = io.StringIO()
+        with patch("sys.stdout", out):
+            code = update_main([
+                "write-manifest", "--version", "v0.5.0", "--base-url", "https://h/d/",
+                str(folder / "SalesTracker.exe"), str(folder / "SalesTracker-linux-x86_64"),
+            ])
+        self.assertEqual(code, 0)
+        data = json.loads(out.getvalue())
+        self.assertEqual(data["version"], "0.5.0")
+        self.assertEqual(data["assets"]["windows-x86_64"]["url"], "https://h/d/SalesTracker.exe")
+
+
+@unittest.skipUnless(HAVE_TK, "no display available for tkinter")
+class GuiUpdateTests(unittest.TestCase):
+    """The Updates section of Settings and the quiet startup check."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        from gui import SalesApp
+
+        self.app = SalesApp(str(self.root / "sales.db"), auto_setup=False)
+        self.addCleanup(self.app.destroy)
+        self.addCleanup(self.app.tracker.close)
+        self.folder = self.root / "rel"
+        self.folder.mkdir()
+        from salestracker.update import platform_key, write_manifest
+
+        name = "SalesTracker.exe" if platform_key().startswith("windows") else "SalesTracker-linux-x86_64"
+        (self.folder / name).write_bytes(b"build 9.0.0")
+        (self.folder / "update.json").write_text(
+            write_manifest([self.folder / name], "9.0.0", "", notes="Big news."), encoding="utf-8"
+        )
+
+    def _dialog(self):
+        from gui import SettingsDialog
+
+        dialog = SettingsDialog(self.app, self.app.tracker, on_change=self.app.refresh)
+        self.addCleanup(dialog.destroy)
+        return dialog
+
+    def test_check_now_reports_the_newer_version(self) -> None:
+        dialog = self._dialog()
+        self.assertIn("Not checked yet", dialog.var_update_status.get())
+        self.assertTrue(dialog.install_button.instate(["disabled"]))
+        dialog.var_update_source.set(str(self.folder))
+        dialog._check_updates(sync=True)
+        self.assertIn("Version 9.0.0 is available", dialog.var_update_status.get())
+        self.assertIn("Big news.", dialog.var_update_status.get())
+        self.assertTrue(dialog.install_button.instate(["!disabled"]))
+        self.assertEqual(self.app.tracker.get_setting("update_source"), str(self.folder))
+
+    def test_a_bad_source_is_reported_in_place(self) -> None:
+        dialog = self._dialog()
+        dialog.var_update_source.set(str(self.root / "nowhere"))
+        dialog._check_updates(sync=True)
+        self.assertIn("No update.json", dialog.var_update_status.get())
+        self.assertEqual(str(dialog.update_status.cget("style")), "Error.TLabel")
+
+    def test_quiet_check_puts_a_notice_in_the_status_bar(self) -> None:
+        self.app.updates.updater.set_source(str(self.folder))
+        self.app.check_updates_quietly(sync=True)
+        self.assertIn("Version 9.0.0 is available", self.app.var_notice.get())
+
+    def test_install_from_settings_swaps_the_binary_and_relaunches(self) -> None:
+        dialog = self._dialog()
+        dialog.var_update_source.set(str(self.folder))
+        dialog._check_updates(sync=True)
+        target = self.root / "SalesTracker"
+        target.write_bytes(b"build 0.1.5")
+        launched = []
+        with patch("salestracker.update.target_path", return_value=target), \
+             patch("gui.messagebox.askyesno", return_value=True), \
+             patch("gui.messagebox.showinfo"), \
+             patch.object(self.app.updates, "relaunch", lambda t: launched.append(t)), \
+             patch.object(self.app, "_on_close"):
+            dialog._install_update(sync=True)
+        self.assertEqual(target.read_bytes(), b"build 9.0.0")
+        self.assertEqual((self.root / "SalesTracker.old").read_bytes(), b"build 0.1.5")
+        self.assertEqual(launched, [target])
 
 
 class ThemeTests(unittest.TestCase):

@@ -73,6 +73,21 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
 - **Payment methods are stored lowercase** (`cash`, `venmo`, `other`) and
   capitalized only for display. The CSV column and the words the CLI
   accepts are the stored form, so `order --method venmo` keeps working.
+- **Updates:** the packaged build can find and install a newer release.
+  A release publishes an `update.json` manifest beside its binaries
+  (version, date, notes, and each build's name, size and SHA-256). The
+  app reads it from an *update source*: `github:owner/repo` (default,
+  through the release-download redirect so no API rate limit applies; a
+  private repository needs a token), any HTTPS address, or a local or
+  shared folder. A packaged build checks quietly at most once a day and
+  reports a newer version in the status bar; Settings has Check now,
+  Install and restart, and Restore previous version; the CLI has
+  `update`, `update --install --yes`, and `--source`. A download is
+  installed only if its size and SHA-256 match the manifest. Installing
+  renames the running binary to `.old` and puts the new one in its place,
+  then restarts; the `.old` copy is kept for the restore. Nothing from
+  the ledger is sent anywhere. From a source checkout, installing is
+  refused.
 - **Empty states** when there are no products or no orders. Invalid input
   fails closed: no partial row is written.
 - **Money:** optional. Stored as `decimal.Decimal` quantized to 0.01,
@@ -88,7 +103,7 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
   - Desktop: `python3 gui.py`
   - Script: `python3 sales_tracker.py` (interactive menu) or subcommands
     (`product`, `order`, `receive`, `list`, `summary`, `money`, `export`,
-    `pay`, `edit`, `delete`, `reset`, …)
+    `pay`, `edit`, `update`, `delete`, `reset`, …)
 - GUI: a sidebar switches between five pages — Counter, Details, Buyers,
   Products, and Money — and carries New product, Export CSV, Settings, and
   the Appearance toggle. Product wizard on first run if the catalog is
@@ -157,15 +172,26 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
     quantity_received, created_at, updated_at, payment_method
   - **Setting:** key, value — operator preferences, not ledger data. Not
     touched by either reset; "reset everything" means products and orders.
+    Holds the theme and the update source, token, last check and cached
+    manifest.
 - If a legacy `sales` table is present, migrate it into products + orders
   (received starts at 0) and drop `sales`.
 - Schema version lives in `PRAGMA user_version` and is currently **3**:
   v1 products + orders, v2 `orders.payment_method`, v3 the `settings`
   table. A database newer than the code is refused rather than opened.
-- External APIs/services: **none**. No Stripe, Shopify, email, or LLM.
+- External APIs/services: **none** for the ledger. The updater is the one
+  exception: it fetches `update.json` and a binary from the configured
+  update source (GitHub Releases by default), only when asked or once a
+  day from a packaged build, and sends nothing but the request. The
+  version number is `salestracker/_version.py`; CI refuses a `v*` tag
+  that does not match it, and attaches `update.json` to the release.
 
 ## Security & Privacy
-- No secrets in source. No accounts, no network auth.
+- No secrets in source. No accounts. The only network credential is the
+  optional update token for a private repository, typed by the operator
+  and kept in the local `settings` table (or the
+  `SALES_TRACKER_UPDATE_TOKEN` environment variable), never in source,
+  never forwarded to the storage host GitHub redirects downloads to.
 - Purchaser names and product data stay on the machine. Do not log extra
   copies of purchaser names.
 - This app never stores card numbers, bank accounts, or payment tokens.
@@ -227,6 +253,9 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
 - [x] Every dialog opens over the main window, and any dialog whose
       content is taller than its window can be scrolled to the end
 - [x] A packaged build opens a real window (`tools/smoke_test.py`)
+- [x] A packaged build can find a newer release from GitHub, a web
+      address or a folder, installs it only when the size and SHA-256
+      match, keeps the previous build, and can restore it
 - [x] `python3 -m unittest test_sales_tracker.py` exits 0
 - [ ] CHANGELOG.md updated for later user-visible releases
 
