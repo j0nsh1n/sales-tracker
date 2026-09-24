@@ -79,8 +79,11 @@ orders are.
 Packaged GUI (no Python install needed): download the Windows `.exe` or
 Linux ELF from the
 [Releases](https://github.com/j0nsh1n/sales-tracker/releases) page.
-`sales.db` is created next to the binary. A tag matching `v*` (for example
-`v0.1.0`) builds both targets and attaches them to that release.
+`sales.db` is created next to the binary. A release is cut when a version
+bump in `salestracker/_version.py` lands on `main` (CI tags it, builds
+both targets, and attaches them with `update.json`); pushing a `v*` tag or
+running the CI workflow from the Actions tab with a `release_tag` does the
+same.
 
 **Updating** a packaged build: the app looks for a newer release once a day
 and says so in the status bar. Settings → Updates has **Check now** and

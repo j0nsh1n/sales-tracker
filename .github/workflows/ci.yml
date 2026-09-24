@@ -16,16 +16,44 @@ on:
         required: false
         default: ""
 
-env:
-  # The release this run is for: the pushed tag, or the dispatch input.
-  RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.release_tag }}
-
 permissions:
   contents: write
 
 jobs:
-  tests:
+  # Which release, if any, this run is for: a pushed v* tag, the dispatch
+  # input, or, on a push to main, the version in _version.py when no tag
+  # for it exists yet. So a version bump landing on main cuts its release
+  # by itself, and nothing needs a local git or the Actions tab.
+  release-plan:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decide the release tag
+        id: plan
+        env:
+          INPUT_TAG: ${{ inputs.release_tag }}
+        run: |
+          version="v$(sed -n 's/^__version__ = "\(.*\)"/\1/p' salestracker/_version.py)"
+          tag=""
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="$GITHUB_REF_NAME"
+          elif [[ -n "$INPUT_TAG" ]]; then
+            tag="$INPUT_TAG"
+          elif [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ]] \
+               && ! git ls-remote --exit-code --tags origin "$version" >/dev/null; then
+            tag="$version"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version in code: $version; release tag: ${tag:-none}"
+
+  tests:
+    needs: release-plan
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.release-plan.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -52,8 +80,10 @@ jobs:
           EOF
 
   windows-exe:
-    needs: tests
+    needs: [release-plan, tests]
     runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ needs.release-plan.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -90,8 +120,10 @@ jobs:
           files: dist/SalesTracker.exe
 
   linux-elf:
-    needs: tests
+    needs: [release-plan, tests]
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.release-plan.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -136,9 +168,11 @@ jobs:
   # The update manifest: what the app's updater reads. It needs both
   # binaries' checksums, so it runs after the two builds.
   release-manifest:
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
-    needs: [windows-exe, linux-elf]
+    if: needs.release-plan.outputs.tag != ''
+    needs: [release-plan, windows-exe, linux-elf]
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.release-plan.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
 
