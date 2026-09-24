@@ -7,19 +7,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- The desktop window is redesigned around a sidebar with four pages.
-  Orders keeps the list but adds header tiles (outstanding, units to hand
-  out, still owed, cash in the drawer), a one-line order form that reads
-  as a sentence, filter pills with counts, and an order panel beside the
-  list with the buyer, a progress bar, −1 / +1 / All hand-over buttons,
-  the order's money, and one-click payment method. Buyers is new: every
-  order grouped by purchaser with what they still owe. Products is new: a
-  card per product with its sales and an Edit button. Money is now a page
-  rather than a dialog, with the drawer verdict shown large and the
-  difference in dollars.
-- Clicking a column heading sorts the order list; clicking again reverses.
-- Ctrl+1 to Ctrl+4 switch pages, Ctrl+F jumps to search, and + / − on the
-  list hand over or take back one unit.
+- The desktop window is redesigned around a sidebar with five pages.
+  Counter is the working page: the orders still waiting are cards, oldest
+  first, each with a Hand over button that unfolds −1 / +1 / All controls
+  around the received box; collected orders fold away underneath; Log a
+  sale opens a dialog. Details is the full grid with every column,
+  sortable by heading, with status and product filters, a one-line
+  command line for logging (`purchaser, quantity, product, paid by`) with
+  a live preview, the received figure typed in place on the row, and
+  keyboard shortcuts (+ − a e n /). Buyers is new: every order grouped by
+  purchaser with what they still owe. Products is new: a card per product
+  with its sales and an Edit button. Money is now a page rather than a
+  dialog, with the drawer verdict shown large and the difference in
+  dollars.
+- Ctrl+1 to Ctrl+5 switch pages, Ctrl+F jumps to search, Ctrl+S opens Log
+  a sale.
 
 ### Fixed
 - In dark mode the arrow on the product wizard's editable unit box stayed

@@ -89,21 +89,28 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
   - Script: `python3 sales_tracker.py` (interactive menu) or subcommands
     (`product`, `order`, `receive`, `list`, `summary`, `money`, `export`,
     `pay`, `edit`, `delete`, `reset`, …)
-- GUI: a sidebar switches between four pages — Orders, Buyers, Products,
-  and Money — and carries New product, Export CSV, Settings, and the
-  Appearance toggle. Product wizard on first run if the catalog is empty,
-  with a welcome card in place of the order form until a product exists.
-  Orders: header stat tiles (outstanding, units to hand out, still owed,
-  cash in the drawer); a one-line order form (purchaser, quantity,
-  product, payment method); the list with received/ordered, filterable and
-  sortable by column; and an inspector for the selected row holding the
-  separate received-so-far box, one-step hand-over controls (−1, +1, all),
-  the payment method, and Edit order. Buyers groups orders by purchaser
-  with what each still owes. Products shows each product as a card with
-  its sales and an Edit button. Money is the money page described above.
-  Edit product is also in the Ledger menu; Ctrl+E edits the selected
-  order. Settings holds the Appearance choice, and the order and product
-  delete pickers behind a typed `RESET` unlock.
+- GUI: a sidebar switches between five pages — Counter, Details, Buyers,
+  Products, and Money — and carries New product, Export CSV, Settings, and
+  the Appearance toggle. Product wizard on first run if the catalog is
+  empty, with a welcome card in place of the queue until a product exists.
+  Counter is the working page: a Log a sale button opening a dialog
+  (purchaser, product, quantity, payment method); a search box; the
+  waiting orders as cards, oldest first, each with its received/ordered
+  figures and a Hand over button that unfolds the received-so-far box
+  with −1, +1 and All controls; received orders folded under Collected.
+  Details is the dense grid: every column (#, purchaser, product, ordered,
+  received, left, owed, status, paid by, logged), sortable by heading,
+  with All / Outstanding / Received filters, a product filter and search;
+  a command line that logs a sale from one line (`purchaser, quantity,
+  product, paid by`) with a live preview; the received figure typed in
+  place on the row (Enter or double-click); + / − hand over one; a All,
+  e Edit, n and / jump to the log line and search; All received, Edit
+  order and a Paid by picker under the grid, with a status line. Buyers
+  groups orders by purchaser with what each still owes. Products shows
+  each product as a card with its sales and an Edit button. Money is the
+  money page described above. Edit product is also in the Ledger menu;
+  Ctrl+E edits the selected order. Settings holds the Appearance choice,
+  and the order and product delete pickers behind a typed `RESET` unlock.
 - CLI interactive session asks one question at a time for product setup,
   logging, and received-so-far updates.
 - Example: establish Honey (jar, $12.50) → log Jim bought 10 → enter 5 in

@@ -861,16 +861,17 @@ class GuiSmokeTests(unittest.TestCase):
 
         self.assertEqual(len(self.app.tree.get_children()), 1)
         values = self.app.tree.item(rows[0], "values")
-        self.assertEqual(values[0], "Jim")
-        self.assertIn("5 / 10", values[2])
-        self.assertEqual(values[4], "outstanding")
+        self.assertEqual(values[1], "Jim")
+        self.assertEqual(values[3], "10 jar")
+        self.assertEqual(values[4], "5")
+        self.assertEqual(values[7], "outstanding")
 
         self.app.var_got.set("10")
         self.app.update_received()
         self.app.update_idletasks()
         self.assertEqual(len(self.app.tree.get_children()), 1)
         values = self.app.tree.item(rows[0], "values")
-        self.assertEqual(values[4], "received")
+        self.assertEqual(values[7], "received")
 
     def test_validation_without_purchaser(self) -> None:
         self.app.tracker.add_product(name="Honey", unit="jar", unit_price="12.50")
@@ -1090,6 +1091,8 @@ class GuiPresentationTests(unittest.TestCase):
         self.app.update_idletasks()
 
     def test_method_picker_offers_capitalized_labels(self) -> None:
+        dialog = self.app.open_log_dialog()
+        self.addCleanup(dialog.destroy)
         self.assertEqual(
             list(self.app.method_combo["values"]), ["Cash", "Venmo", "Other"]
         )
@@ -1103,7 +1106,7 @@ class GuiPresentationTests(unittest.TestCase):
     def test_list_shows_the_capitalized_label(self) -> None:
         self._log("Ann", "Venmo")
         rows = self.app.tree.get_children()
-        self.assertEqual(self.app.tree.item(rows[0], "values")[-1], "Venmo")
+        self.assertEqual(self.app.tree.item(rows[0], "values")[8], "Venmo")
 
     def test_export_keeps_the_lowercase_value(self) -> None:
         # The CSV is data the CLI round-trips, so it must not be prettified.
@@ -1220,6 +1223,7 @@ class GuiPresentationTests(unittest.TestCase):
         for i in range(60):
             self.app.tracker.add_order(purchaser=f"Buyer {i:02d}", quantity="2")
         self.app.refresh()
+        self.app.show_page("details")
         self.app.update()
         tree = self.app.tree
         self.assertLess(tree.yview()[1], 1.0, "list does not overflow")
@@ -1382,9 +1386,10 @@ class GuiEditTests(unittest.TestCase):
         self.assertEqual(edited.quantity_received, Decimal("5"))
         self.assertEqual(edited.payment_method, "venmo")
         values = self.app.tree.item(str(self.order.id), "values")
-        self.assertEqual(values[0], "Jimmy")
-        self.assertIn("5 / 12", values[2])
-        self.assertEqual(values[-1], "Venmo")
+        self.assertEqual(values[1], "Jimmy")
+        self.assertEqual(values[3], "12 jar")
+        self.assertEqual(values[4], "5")
+        self.assertEqual(values[8], "Venmo")
         self.assertEqual(self.app.tree.selection(), (str(self.order.id),))
 
     def test_rejected_order_edit_stays_open_and_writes_nothing(self) -> None:
@@ -1445,6 +1450,8 @@ class GuiEditTests(unittest.TestCase):
         dialog.save()
         self.app.update_idletasks()
         self.assertEqual(self.app.var_product.get(), "Strawberry jam")
+        log = self.app.open_log_dialog()
+        self.addCleanup(log.destroy)
         self.assertIn("Strawberry jam", self.app.product_combo["values"])
 
     def test_duplicate_name_is_shown_in_the_dialog(self) -> None:
@@ -1460,7 +1467,7 @@ class GuiEditTests(unittest.TestCase):
 
 @unittest.skipUnless(HAVE_TK, "no display available for tkinter")
 class GuiLayoutTests(unittest.TestCase):
-    """Pages, the inspector, sorting, and the other pieces of the main window."""
+    """Pages, the Counter cards, the Details grid, and the rest of the window."""
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -1493,17 +1500,84 @@ class GuiLayoutTests(unittest.TestCase):
             shown = [k for k, page in self.app.pages.items() if page.winfo_ismapped()]
             self.assertEqual(shown, [key])
 
-    def test_inspector_follows_the_selection(self) -> None:
-        self.app.tree.selection_remove(*self.app.tree.selection())
-        self.app._on_select()
+    def test_counter_shows_waiting_cards_and_folds_the_collected(self) -> None:
+        self.assertEqual(sorted(self.app._card_widgets), [self.jim.id, self.ann.id])
+        self.app._toggle_collected()
+        self.assertEqual(
+            sorted(self.app._card_widgets), [self.jim.id, self.ann.id, self.bob.id]
+        )
+
+    def test_opening_a_card_unfolds_one_stepper_at_a_time(self) -> None:
+        self.app.open_card(self.jim.id)
         self.app.update()
-        self.assertTrue(self.app.insp_empty.winfo_ismapped())
-        self._select(self.jim)
-        self.app.update()
-        self.assertTrue(self.app.insp_body.winfo_ismapped())
-        self.assertEqual(self.app.var_i_name.get(), "Jim")
-        self.assertEqual(self.app.var_i_money["owed"].get(), "$37.50")
+        self.assertIn("entry", self.app._card_widgets[self.jim.id])
+        self.assertIn("open", self.app._card_widgets[self.ann.id])
         self.assertEqual(self.app.var_got.get(), "0")
+        self.assertEqual(self.app._selected_id(), self.jim.id)
+        self.app.open_card(self.ann.id)
+        self.assertIn("open", self.app._card_widgets[self.jim.id])
+        self.assertIn("entry", self.app._card_widgets[self.ann.id])
+        self.app.close_card()
+        self.assertIn("open", self.app._card_widgets[self.ann.id])
+
+    def test_search_narrows_the_counter(self) -> None:
+        self.app.var_search.set("ji")
+        self.assertEqual(list(self.app._card_widgets), [self.jim.id])
+        self.app.var_search.set("zzz")
+        self.assertEqual(self.app._card_widgets, {})
+        self.app.var_search.set("")
+        self.assertEqual(len(self.app._card_widgets), 2)
+
+    def test_log_dialog_logs_through_the_apps_variables(self) -> None:
+        dialog = self.app.open_log_dialog()
+        self.assertIs(self.app.open_log_dialog(), dialog)
+        self.app.var_purchaser.set("Dana")
+        self.app.var_product.set("Candle")
+        self.app.var_qty.set("0")
+        dialog.save()
+        self.assertIn("greater than zero", self.app.var_error.get())
+        self.assertTrue(dialog.winfo_exists())
+        self.app.var_qty.set("4")
+        dialog.save()
+        self.app.update_idletasks()
+        self.assertFalse(dialog.winfo_exists())
+        self.assertIsNone(self.app.log_dialog)
+        logged = [o for o in self.tracker.list_orders() if o.purchaser == "Dana"]
+        self.assertEqual(len(logged), 1)
+        self.assertEqual(logged[0].product_name, "Candle")
+        self.assertEqual(self.app._selected_id(), logged[0].id)
+
+    def test_command_line_previews_then_logs(self) -> None:
+        self.app.var_cmd.set("Dana, 4")
+        self.assertIn("Choose which product", self.app.var_cmd_preview.get())
+        self.app.var_cmd.set("Dana, 4, Candle, venmo")
+        self.assertTrue(self.app.var_cmd_preview.get().startswith("\u2192 Dana"))
+        self.assertIn("$32.00", self.app.var_cmd_preview.get())
+        self.app.run_cmd()
+        logged = [o for o in self.tracker.list_orders() if o.purchaser == "Dana"]
+        self.assertEqual(logged[0].payment_method, "venmo")
+        self.assertEqual(self.app.var_cmd.get(), "")
+        self.assertIn("Logged #", self.app.var_status.get())
+        self.app.var_cmd.set("Nobody, 0, Candle")
+        self.app.run_cmd()
+        self.assertIn("greater than zero", self.app.var_status.get())
+        self.assertEqual(len(self.tracker.list_orders()), 4)
+
+    def test_grid_cell_editor_commits_and_reports(self) -> None:
+        self.app.show_page("details")
+        self.app.update()
+        self._select(self.jim)
+        self.assertEqual(self.app.begin_edit(), "break")
+        self.assertIsNotNone(self.app._editor)
+        self.app.var_got.set("2")
+        self.app.update_received()
+        self.assertEqual(self.tracker.get_order(self.jim.id).quantity_received, 2)
+        self.assertIsNone(self.app._editor)
+        self.app.begin_edit()
+        self.app.var_got.set("9")
+        self.app.update_received()
+        self.assertIn("cannot be more than 3", self.app.var_status.get())
+        self.assertEqual(self.tracker.get_order(self.jim.id).quantity_received, 2)
 
     def test_steppers_hand_over_one_at_a_time_within_bounds(self) -> None:
         self._select(self.jim)
@@ -1522,25 +1596,33 @@ class GuiLayoutTests(unittest.TestCase):
         self._select(self.jim)
         self.app.mark_all_received()
         self.assertTrue(self.tracker.get_order(self.jim.id).fulfilled)
-        self.assertTrue(self.app.btn_all.instate(["disabled"]))
+        self.app._toggle_collected()
+        self.app.open_card(self.jim.id)
+        self.assertTrue(self.app._card_widgets[self.jim.id]["all"].instate(["disabled"]))
+        self.assertTrue(self.app._card_widgets[self.jim.id]["plus"].instate(["disabled"]))
 
-    def test_rejected_received_figure_is_reported_in_the_inspector(self) -> None:
-        self._select(self.jim)
+    def test_rejected_received_figure_is_reported_on_the_card(self) -> None:
+        self.app.open_card(self.jim.id)
         self.app.var_got.set("9")
         self.app.update_received()
-        self.assertIn("cannot be more than 3", self.app.var_i_error.get())
+        self.assertIn("cannot be more than 3", self.app._card_error)
+        self.assertIn("entry", self.app._card_widgets[self.jim.id])
         self.assertEqual(self.tracker.get_order(self.jim.id).quantity_received, 0)
+        self.app.var_got.set("1")
+        self.app.update_received()
+        self.assertEqual(self.app._card_error, "")
+        self.assertEqual(self.tracker.get_order(self.jim.id).quantity_received, 1)
 
-    def test_payment_pills_change_the_stored_method(self) -> None:
+    def test_paid_by_picker_changes_the_stored_method(self) -> None:
         self._select(self.jim)
-        self.app.var_i_method.set("venmo")
+        self.app.row_method.set("Venmo")
         self.app._change_method()
         self.assertEqual(self.tracker.get_order(self.jim.id).payment_method, "venmo")
         self.assertEqual(self.app._selected_id(), self.jim.id)
 
     def test_clicking_a_heading_sorts_and_a_second_click_reverses(self) -> None:
         def names():
-            return [self.app.tree.item(i, "values")[0] for i in self.app.tree.get_children()]
+            return [self.app.tree.item(i, "values")[1] for i in self.app.tree.get_children()]
 
         self.assertEqual(names(), ["Jim", "ann", "Bob"])
         self.app.sort_by("purchaser")
@@ -1558,14 +1640,14 @@ class GuiLayoutTests(unittest.TestCase):
         self.assertTrue(texts["received"].endswith("1"))
 
     def test_placeholders_never_reach_the_variables(self) -> None:
-        self.assertEqual(self.app.var_purchaser.get(), "")
         self.assertEqual(self.app.var_search.get(), "")
         self.app.update()
         # Shown while empty, gone once there is text.
-        self.assertIn("Who bought?", _mapped_label_texts(self.app))
-        self.app.var_purchaser.set("Zed")
+        self.assertIn("Find someone\u2026", _mapped_label_texts(self.app))
+        self.app.var_search.set("Zed")
         self.app.update()
-        self.assertNotIn("Who bought?", _mapped_label_texts(self.app))
+        self.assertNotIn("Find someone\u2026", _mapped_label_texts(self.app))
+        self.assertEqual(self.app.var_search.get(), "Zed")
 
     def test_buyers_page_groups_by_name_regardless_of_case(self) -> None:
         self.tracker.add_order(purchaser="Ann", quantity="1", product="Honey")
@@ -1579,13 +1661,13 @@ class GuiLayoutTests(unittest.TestCase):
         self.app.var_buyer_search.set("bo")
         self.assertEqual(tree.get_children(), ("buyer:bob",))
 
-    def test_opening_an_order_from_buyers_selects_it_on_orders(self) -> None:
+    def test_opening_an_order_from_buyers_selects_it_on_details(self) -> None:
         self.app.var_filter.set("received")
         self.app.refresh()
         self.app.show_page("buyers")
         self.app.buyers_tree.selection_set(str(self.jim.id))
         self.app._open_from_buyers()
-        self.assertEqual(self.app._page, "orders")
+        self.assertEqual(self.app._page, "details")
         self.assertEqual(self.app._selected_id(), self.jim.id)
 
     def test_products_page_has_a_card_per_product(self) -> None:
@@ -1609,7 +1691,7 @@ class GuiLayoutTests(unittest.TestCase):
         self.assertEqual(panel.var_difference.get(), "+$2.00")
 
     def test_sidebar_badges_count_what_needs_attention(self) -> None:
-        badge = self.app._nav["orders"]["badge"]
+        badge = self.app._nav["counter"]["badge"]
         self.assertEqual(str(badge.cget("text")), "2")
         self.assertEqual(str(self.app._nav["products"]["badge"].cget("text")), "2")
 
@@ -1817,19 +1899,29 @@ class GuiThemeTests(unittest.TestCase):
         # dialog colour the generic repaint gives every canvas.
         app = self._app()
         app.set_theme(theme.LIGHT)
+        app.tracker.add_product(name="Honey", unit="jar", unit_price="1")
+        app.tracker.add_order(purchaser="Jim", quantity="2")
+        app.refresh()
         app.show_page("products")
         app.set_theme(theme.DARK)
         app.update_idletasks()
         dark = theme.PALETTES[theme.DARK]
-        self.assertEqual(app.avatar.cget("bg"), dark["CARD"])
+        self.assertTrue(app._bars)
+        self.assertTrue(all(bar.cget("bg") == dark["CARD"] for bar in app._bars))
         self.assertEqual(app.brand_mark.cget("bg"), dark["SIDEBAR"])
-        canvases = [c for c in gui_canvases(app.pages["products"])]
+        # The page's own scroll canvas sits on PAGE; the product cards' bars
+        # sit on CARD and are covered by the assertion above.
+        canvases = [c for c in gui_canvases(app.pages["products"]) if c not in app._bars]
         self.assertTrue(canvases)
         self.assertTrue(all(c.cget("bg") == dark["PAGE"] for c in canvases))
 
     def test_combobox_dropdown_rebuilds_in_the_new_palette(self) -> None:
         app = self._app()
         app.set_theme(theme.LIGHT)
+        app.tracker.add_product(name="Honey", unit="jar", unit_price="1")
+        app.refresh()
+        dialog = app.open_log_dialog()
+        self.addCleanup(self._quietly, dialog.destroy)
         combo = app.method_combo
         # The dropdown listbox is only built on the first open; force that
         # first open here instead of simulating a click.

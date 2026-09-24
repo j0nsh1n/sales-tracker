@@ -5,7 +5,7 @@
 - App is a **SQLite ledger** with two entry points: interactive CLI
   (`sales_tracker.py`) and Tkinter UI (`gui.py`). Implementation lives in
   the `salestracker` package; root files are shims.
-- Tests: `python3 -m unittest test_sales_tracker.py` — 123 tests, green on
+- Tests: `python3 -m unittest test_sales_tracker.py` — 128 tests, green on
   Linux (cloud container, 3.14 via `uv python install 3.14`, GUI under
   `xvfb-run`). Packaged build: `python3 tools/smoke_test.py`.
   Lint / types: **not configured**.
@@ -65,15 +65,23 @@ Product 1---* Order
 - GUI auto-opens the product wizard when the catalog is empty. The
   "Establish a product" button belongs to the welcome card and disappears
   with it, so the sidebar carries its own New product button.
-- GUI layout (2026-09-24 redesign): sidebar + four pages (`show_page`),
-  Money is a page (`MoneyPanel`), not a dialog. Plain Tk widgets register
+- GUI layout (2026-09-24 redesign): sidebar + five pages (`show_page`).
+  Counter (design direction A) is the working page: cards rebuilt by
+  `_render_counter` on every refresh, one card's stepper open at a time
+  (`_open_card`). Details (direction B) holds the grid, the command line
+  (`_parse_cmd` / `run_cmd`) and an in-place received editor placed over
+  the cell. `selected_order_id` is the one source of "the order being
+  worked on" for both pages; `_on_select` ignores selection changes made
+  during `refresh`. Log a sale is a dialog whose fields are the app's own
+  variables, so `log_order` works with or without it open. Money is a
+  page (`MoneyPanel`), not a dialog. Plain Tk widgets register
   their palette names with `SalesApp.paint()` and `_repaint` reapplies
   them after the generic canvas pass, which would otherwise leave page
   canvases in the dialog colour. Entry hints are `Placeholder` overlays,
   so the variables never hold hint text. A Treeview cuts off columns it
   cannot fit instead of shrinking them, so `_fit_columns` shares the width
-  on every resize. Paid by is kept in each row's values but hidden from
-  the Orders list (`DISPLAY`); six columns beside the inspector truncated.
+  on every resize. The Buyers grid keeps its own headings; the Details
+  grid uses `HEADINGS`.
 - Settings reset requires typing RESET so it cannot be a stray click.
 - PyInstaller is build-only, not a runtime dependency. The pin is 6.22.2
   because 6.21.0 collects no Tcl/Tk data against Python 3.14 (Tcl/Tk 9
@@ -130,22 +138,19 @@ Product 1---* Order
 ## Session Handoff
 - **Date:** 2026-09-24
 - **Branch:** `claude/loving-sagan-cstbui` (from `main` at v0.1.5)
-- **Done:** (1) edit orders and products (store, CLI, GUI dialogs).
-  (2) Desktop redesign: sidebar pages (Orders, Buyers, Products, Money),
-  header stat tiles, sentence order form, order inspector with hand-over
-  steppers and payment pills, sortable columns, product cards, Money as a
-  page. spec.md GUI description updated; the human asked for a drastic
-  UI change this session.
-- **Verified:** 123 tests green under xvfb on 3.14 (uv) and on system
-  3.12 with Inter / JetBrains Mono installed; 51 skip headless. Every page
-  checked by screenshot in light and dark at 1260x800 and at the minimum
-  1180x700.
-  Linux onefile rebuilt with PyInstaller 6.22.2 and `tools/smoke_test.py`
-  passed (window titled Sales Tracker, first-run wizard on top).
+- **Done:** (1) edit orders and products. (2) Sidebar redesign. (3) Four
+  UI directions prototyped in `docs/explorations/`; the human chose A
+  (Counter) as the main page with B (Register) as a Details page, and
+  that is now implemented: the Orders page and its inspector are replaced
+  by Counter cards with a hand-over stepper and a Log a sale dialog, and
+  a new Details page carries the grid, command line, in-place received
+  editor and keyboard shortcuts. spec.md's GUI description updated.
+- **Verified:** 128 tests green under xvfb on 3.14 (uv); Counter and
+  Details checked by screenshot in light and dark at 1260x800 and at the
+  minimum 1180x700, including the card and cell error states. Linux
+  onefile rebuilt and `tools/smoke_test.py` passed.
 - **Open:** price is not snapshotted per order (repricing warned about,
-  not prevented). Windows exe not rebuilt locally; CI builds it. At the
-  minimum width the Status column truncates slightly. Coins, zelle/card,
-  history binaries as before.
+  not prevented). Buyers page kept although neither chosen direction had
+  it; drop it if unwanted. Windows exe not rebuilt locally; CI builds it.
+  Coins, zelle/card, history binaries as before.
 - **Next:** review the branch (CI builds both targets), then merge.
-  Separately, `docs/explorations/index.html` holds four UI directions
-  awaiting the human's choice; none is implemented in the app.

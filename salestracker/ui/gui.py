@@ -35,6 +35,8 @@ from salestracker import (
     format_money,
     format_payment_method,
     format_qty,
+    parse_payment_method,
+    parse_quantity,
     reconcile,
 )
 from tkinter import filedialog
@@ -921,6 +923,48 @@ class Placeholder:
             self.label.place(in_=self.entry, x=9, rely=0.5, anchor="w")
 
 
+class LogSaleDialog(_EditDialog):
+    """Log a sale from the Counter. The fields are the app's own variables,
+    so ``SalesApp.log_order`` reads them whether or not this dialog is open."""
+
+    def __init__(self, master: tk.Tk, tracker: SalesTracker) -> None:
+        super().__init__(master, tracker, "Log a sale")
+        self.app = master
+        # Errors go where the form is: the app's error variable feeds the
+        # label this dialog builds.
+        self.var_error = master.var_error
+        products = tracker.list_products()
+        purchasers = sorted({o.purchaser for o in tracker.list_orders()},
+                            key=str.casefold)
+
+        ttk.Label(self.pad, text="Log a sale", style="Section.TLabel").pack(anchor="w")
+        ttk.Label(self.pad, text="Received starts at 0. They stay on the list "
+                  "until everything is handed over.",
+                  style="Hint.TLabel", wraplength=380).pack(anchor="w", pady=(4, 16))
+        self.purchaser_combo = self._combo("WHO BOUGHT?", master.var_purchaser,
+                                           purchasers, readonly=False)
+        self.product_combo = self._combo("WHAT", master.var_product,
+                                         [p.name for p in products])
+        self.qty_entry = self._entry("HOW MANY", master.var_qty)
+        self.method_combo = self._combo(
+            "PAID BY", master.var_method,
+            [format_payment_method(m) for m in PAYMENT_METHODS],
+        )
+        self._finish("Log order")
+        self._focus_later(self.purchaser_combo)
+
+    def save(self) -> None:
+        self.app.log_order()
+
+    def destroy(self) -> None:
+        self.app.var_error.set("")
+        if self.app.log_dialog is self:
+            self.app.log_dialog = None
+            self.app.product_combo = None
+            self.app.method_combo = None
+        super().destroy()
+
+
 class MoneyPanel(ttk.Frame):
     """Expected money beside an independent bill count, and the verdict.
 
@@ -1096,48 +1140,59 @@ class MoneyPanel(ttk.Frame):
 
 
 class SalesApp(tk.Tk):
-    """Main window: a sidebar of pages; orders are a list with an inspector."""
+    """Main window: a sidebar of pages.
 
-    COLUMNS = ("purchaser", "product", "progress", "owed", "status", "method")
+    Counter is where the operator works: a queue of who is waiting, each a
+    card with a hand-over stepper. Details is the dense grid with every
+    column, a command line for fast entry, sorting and filters.
+    """
+
+    COLUMNS = ("id", "purchaser", "product", "ordered", "received", "left",
+               "owed", "status", "method", "logged")
     HEADINGS = {
-        "purchaser": ("Purchaser", 160, "w"),
-        "product": ("Product", 150, "w"),
-        "progress": ("Received / ordered", 170, "w"),
-        "owed": ("Still owed", 95, "e"),
-        "status": ("Status", 105, "w"),
-        "method": ("Paid by", 80, "w"),
+        "id": ("#", 40, "e"),
+        "purchaser": ("Purchaser", 150, "w"),
+        "product": ("Product", 140, "w"),
+        "ordered": ("Ordered", 90, "e"),
+        "received": ("Received", 80, "e"),
+        "left": ("Left", 60, "e"),
+        "owed": ("Owed", 85, "e"),
+        "status": ("Status", 100, "w"),
+        "method": ("Paid by", 75, "w"),
+        "logged": ("Logged", 75, "w"),
     }
-    # Paid by stays in each row's values but is shown in the inspector and on
-    # the Buyers page instead; six columns beside the inspector truncated.
-    DISPLAY = ("purchaser", "product", "progress", "owed", "status")
     SORT_KEYS = {
+        "id": lambda o: o.id,
         "purchaser": lambda o: o.purchaser.casefold(),
         "product": lambda o: o.product_name.casefold(),
-        "progress": lambda o: o.quantity_received / o.quantity_ordered,
+        "ordered": lambda o: o.quantity_ordered,
+        "received": lambda o: o.quantity_received,
+        "left": lambda o: o.remaining,
         "owed": lambda o: o.uncollected,
         "status": lambda o: o.fulfilled,
         "method": lambda o: o.payment_method,
+        "logged": lambda o: o.created_at,
     }
     PAGES = (
-        ("orders", "Orders"),
+        ("counter", "Counter"),
+        ("details", "Details"),
         ("buyers", "Buyers"),
         ("products", "Products"),
         ("money", "Money"),
     )
     HINTS = {
-        "orders": "Enter logs a sale  ·  + / − hands over one  ·  "
-                  "Ctrl+E edits the selected order",
-        "buyers": "Double-click an order to open it on the Orders page",
+        "counter": "Hand over opens a stepper  ·  Enter records the figure  ·  "
+                   "Ctrl+E edits the open order",
+        "details": "↑↓ row  ·  + / − hand over  ·  Enter types received  ·  "
+                   "a all  ·  e edit  ·  n log line  ·  / search",
+        "buyers": "Double-click an order to open it on Details",
         "products": "Ctrl+N adds a product",
         "money": "Counts are never saved",
     }
-    BAR_CELLS = 6
-    # Tk paints one foreground per row, so the bar must read monochrome.
-    # U+25A0/U+25A1 are equal-width and present in Segoe UI for the Windows exe.
-    BAR_FULL = "■"
-    BAR_EMPTY = "□"
+    # Pips would be the natural control, but Tk buttons are heavy; the card
+    # keeps a stepper, and the grid edits the figure in place.
+    EVERY_PRODUCT = "Every product"
     SIDEBAR_WIDTH = 216
-    INSPECTOR_WIDTH = 318
 
     def __init__(self, db_path: str | None = None, *, auto_setup: bool = True) -> None:
         super().__init__()
@@ -1150,8 +1205,20 @@ class SalesApp(tk.Tk):
         # the palette names it takes, and repainted from them on a switch.
         self._painted: list[tuple[tk.Misc, dict[str, str]]] = []
         self._bars: list[tk.Canvas] = []
-        self._page = "orders"
+        self._page = "counter"
         self._sort: tuple[str, bool] | None = None
+        # Counter state: the one card whose stepper is open, its error, and
+        # whether the Collected section is unfolded.
+        self._open_card: int | None = None
+        self._card_error = ""
+        self._show_collected = False
+        self._card_widgets: dict[int, dict[str, tk.Misc]] = {}
+        self._refreshing = False
+        # Details state: the in-place editor over the received cell.
+        self._editor: ttk.Entry | None = None
+        self.log_dialog: LogSaleDialog | None = None
+        self.product_combo: ttk.Combobox | None = None
+        self.method_combo: ttk.Combobox | None = None
 
         # Paint before any widget is built, so nothing is created in the
         # outgoing theme's colours.
@@ -1171,7 +1238,7 @@ class SalesApp(tk.Tk):
         self._build_menu()
         self._build()
         self._binds()
-        self.show_page("orders")
+        self.show_page("counter")
         self.refresh()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._watch_os_theme()
@@ -1227,7 +1294,8 @@ class SalesApp(tk.Tk):
         self._painted = alive
         self._sync_nav()
         self._draw_brand()
-        self._render_inspector()
+        self._tag_rows()
+        self._render_counter()
         self._redraw_bars()
         _drop_combobox_popdowns(self)
         return self.theme_painted
@@ -1291,6 +1359,7 @@ class SalesApp(tk.Tk):
         style.configure("Bar.TFrame", background=PANEL)
         style.configure("Page.TFrame", background=PAGE)
         style.configure("Card.TFrame", background=CARD)
+        style.configure("Subtle.TFrame", background=SUBTLE)
         style.configure("Side.TFrame", background=SIDEBAR)
         style.configure("Nav.TFrame", background=SIDEBAR)
         style.configure("NavHover.TFrame", background=SIDEBAR_ACTIVE)
@@ -1334,6 +1403,17 @@ class SalesApp(tk.Tk):
                         font=self.font_figures)
         style.configure("CardFigureBig.TLabel", background=CARD, foreground=INK,
                         font=self.font_big_figure)
+        style.configure("CardFigureMutedBig.TLabel", background=CARD, foreground=MUTED,
+                        font=self.font_big_figure)
+        style.configure("CardGood.TLabel", background=CARD, foreground=ACCENT,
+                        font=self.font_muted)
+        style.configure("PageCaption.TLabel", background=PAGE, foreground=MUTED,
+                        font=self.font_label)
+        style.configure("Fold.TButton", background=PAGE, foreground=MUTED,
+                        bordercolor=PAGE, focusthickness=3, focuscolor=FOCUS,
+                        padding=(2, 4), font=self.font_label)
+        style.map("Fold.TButton", background=[("active", PAGE)],
+                  foreground=[("active", INK)])
         style.configure("Kpi.TLabel", background=CARD, foreground=INK, font=self.font_stat)
         style.configure("Word.TLabel", background=CARD, foreground=MUTED, font=self.font_word)
         style.configure("Placeholder.TLabel", background=FIELD, foreground=MUTED,
@@ -1419,6 +1499,19 @@ class SalesApp(tk.Tk):
                   background=[("active", ACCENT_DARK), ("disabled", DISABLED)],
                   foreground=[("disabled", ON_ACCENT)])
 
+        style.configure("Big.TButton", background=ACCENT, foreground=ON_ACCENT,
+                        bordercolor=ACCENT, focusthickness=3, focuscolor=ACCENT_SOFT,
+                        padding=(20, 11), font=self.font_card_title)
+        style.map("Big.TButton", background=[("active", ACCENT_DARK)])
+        style.configure("SubtleStep.TButton", background=CARD, foreground=INK,
+                        bordercolor=LINE, focusthickness=3, focuscolor=FOCUS,
+                        padding=(12, 8), font=self.font_card_title, width=3)
+        style.map("SubtleStep.TButton", background=[("active", SUBTLE)],
+                  foreground=[("disabled", DISABLED)])
+        style.configure("CounterHint.TLabel", background=SUBTLE, foreground=MUTED,
+                        font=self.font_muted)
+        style.configure("CounterError.TLabel", background=SUBTLE, foreground=DANGER,
+                        font=self.font_muted)
         style.configure("Ghost.TButton", background=PANEL, foreground=INK,
                         bordercolor=LINE, focusthickness=3, focuscolor=FOCUS,
                         padding=(11, 7), font=self.font_body)
@@ -1523,14 +1616,16 @@ class SalesApp(tk.Tk):
         self.var_got = tk.StringVar()
         self.var_buyer_search = tk.StringVar()
         self.var_subs = {key: tk.StringVar() for key, _title in self.PAGES}
-        # Inspector
-        self.var_i_name = tk.StringVar()
-        self.var_i_product = tk.StringVar()
-        self.var_i_progress = tk.StringVar()
-        self.var_i_error = tk.StringVar()
-        self.var_i_method = tk.StringVar(value=CASH)
-        self.var_i_meta = tk.StringVar()
-        self.var_i_money = {key: tk.StringVar() for key in ("total", "collected", "owed")}
+        # Details page: the command line, its preview, the product filter,
+        # and the status line under the grid.
+        self.var_cmd = tk.StringVar()
+        self.var_cmd_preview = tk.StringVar(
+            value="Type a purchaser, quantity, product and paid-by separated "
+                  "by commas, then press Enter."
+        )
+        self.var_product_filter = tk.StringVar(value=self.EVERY_PRODUCT)
+        self.var_status = tk.StringVar()
+        self.var_cmd.trace_add("write", lambda *_: self._preview_cmd())
         self.var_search.trace_add("write", lambda *_: self.refresh())
         self.var_buyer_search.trace_add("write", lambda *_: self._render_buyers())
         self.var_product.trace_add("write", lambda *_: self._sync_qty_label())
@@ -1577,7 +1672,8 @@ class SalesApp(tk.Tk):
         # Packed before the pages, so it keeps its strip at any window height.
         self._build_statusbar()
         self.pages = {
-            "orders": self._build_orders_page(),
+            "counter": self._build_counter_page(),
+            "details": self._build_details_page(),
             "buyers": self._build_buyers_page(),
             "products": self._build_products_page(),
             "money": self._build_money_page(),
@@ -1692,47 +1788,36 @@ class SalesApp(tk.Tk):
         self._render_page(key)
 
     def _render_page(self, key: str) -> None:
-        if key == "buyers":
+        if key == "counter":
+            self._render_counter()
+        elif key == "buyers":
             self._render_buyers()
         elif key == "products":
             self._render_products()
         elif key == "money":
             self.money_panel.reload()
 
-    # ----------------------------------------------------------- orders page
+    # ---------------------------------------------------------- counter page
 
-    def _build_orders_page(self) -> ttk.Frame:
-        page, head = self._page_frame("orders", "Orders")
-        self.kpi_row = ttk.Frame(head, style="Page.TFrame")
-        self.kpi_row.pack(side="right", anchor="s")
-        self.kpi: dict[str, tuple[tk.StringVar, ttk.Label]] = {}
-        for key, caption, colour in (
-            ("outstanding", "OUTSTANDING", "WARN"),
-            ("due", "TO HAND OUT", "ACCENT"),
-            ("owed", "STILL OWED", "INK"),
-            ("cash", "CASH IN DRAWER", "ACCENT"),
-        ):
-            border, tile = self.card(self.kpi_row, padding=(0, 10, 16, 10))
-            border.pack(side="left", padx=(10, 0))
-            strip = tk.Frame(tile, width=3)
-            self.paint(strip, bg=colour)
-            strip.pack(side="left", fill="y", padx=(0, 12))
-            text = ttk.Frame(tile, style="Card.TFrame")
-            text.pack(side="left")
-            ttk.Label(text, text=caption, style="CardCaption.TLabel").pack(anchor="w")
-            var = tk.StringVar(value="0")
-            label = ttk.Label(text, textvariable=var, style="Kpi.TLabel")
-            label.pack(anchor="w")
-            self.kpi[key] = (var, label)
-
+    def _build_counter_page(self) -> ttk.Frame:
+        page, head = self._page_frame("counter", "Counter")
+        self.log_button = ttk.Button(head, text="Log a sale", style="Big.TButton",
+                                     command=self.open_log_dialog)
+        self.log_button.pack(side="right", anchor="s")
         self._build_welcome(page)
+        # Everything below the welcome card; hidden until a product exists.
         self.order_form = ttk.Frame(page, style="Page.TFrame")
-        self._build_composer(self.order_form)
-        self._build_workspace(self.order_form)
+        tools = ttk.Frame(self.order_form, style="Page.TFrame")
+        tools.pack(fill="x", pady=(0, 14))
+        self.search_entry = ttk.Entry(tools, textvariable=self.var_search,
+                                      style="Search.TEntry", font=self.font_word)
+        self.search_entry.pack(fill="x", ipady=3)
+        Placeholder(self.search_entry, self.var_search, "Find someone…")
+        self.counter_body = self._scroll_area(self.order_form)
         return page
 
     def _build_welcome(self, page: ttk.Frame) -> None:
-        # Shown instead of the form until a product exists.
+        # Shown instead of the queue until a product exists.
         border, hero = self.card(page, padding=(40, 36, 40, 40))
         self.need_product = border
         ttk.Label(hero, text="GET STARTED", style="CardCaption.TLabel").pack(anchor="w")
@@ -1758,58 +1843,200 @@ class SalesApp(tk.Tk):
         ttk.Button(hero, text="Establish a product", style="Primary.TButton",
                    command=self.open_wizard).pack(anchor="w")
 
-    def _build_composer(self, parent: ttk.Frame) -> None:
-        border, card = self.card(parent, padding=(18, 14, 18, 8))
-        border.pack(fill="x", pady=(0, 14))
-        row = ttk.Frame(card, style="Card.TFrame")
-        row.pack(fill="x")
+    def _render_counter(self, focus: tuple[int, str] | None = None) -> None:
+        """Rebuild the queue: Waiting, oldest first, then Collected folded."""
+        if not hasattr(self, "counter_body"):
+            return
+        body = self.counter_body
+        for child in body.winfo_children():
+            child.destroy()
+        self._painted = [(w, t) for w, t in self._painted if w.winfo_exists()]
+        self._card_widgets = {}
+        if not self.tracker.list_products():
+            return
+        search = self.var_search.get().strip() or None
+        orders = self.tracker.list_orders(search=search)
+        waiting = sorted((o for o in orders if not o.fulfilled), key=lambda o: o.created_at)
+        done = [o for o in orders if o.fulfilled]
+        if self._open_card is not None and all(o.id != self._open_card for o in orders):
+            self._open_card = None
 
-        def word(text: str | None = None, var: tk.StringVar | None = None) -> None:
-            ttk.Label(row, text=text or "", textvariable=var, style="Word.TLabel").pack(
-                side="left", padx=8
-            )
+        if not orders:
+            border, empty = self.card(body, padding=(28, 32, 28, 32))
+            border.pack(fill="x")
+            title = (f"Nothing matches “{search}”" if search else "No one is waiting")
+            hint = ("Try a shorter name, or clear the search." if search else
+                    "Log a sale and the person appears here until everything is handed over.")
+            ttk.Label(empty, text=title, style="CardTitle.TLabel").pack()
+            ttk.Label(empty, text=hint, style="CardHint.TLabel", wraplength=420,
+                      justify="center").pack(pady=(6, 0))
+        else:
+            head = ttk.Frame(body, style="Page.TFrame")
+            head.pack(fill="x", pady=(0, 8))
+            ttk.Label(head, text=f"WAITING  ·  {len(waiting)}",
+                      style="PageCaption.TLabel").pack(side="left")
+            ttk.Label(head, text="Oldest first", style="PageHint.TLabel").pack(side="right")
+            if waiting:
+                for order in waiting:
+                    self._render_card(body, order)
+            else:
+                ttk.Label(body, text="Everyone has collected. Nice.",
+                          style="PageSub.TLabel").pack(anchor="w", pady=(4, 12))
+            if done:
+                arrow = "▾" if self._show_collected else "▸"
+                toggle = ttk.Button(
+                    body, text=f"{arrow}  COLLECTED  ·  {len(done)}",
+                    style="SideLink.TButton", command=self._toggle_collected,
+                )
+                toggle.configure(style="Fold.TButton")
+                toggle.pack(anchor="w", pady=(10, 8))
+                if self._show_collected:
+                    for order in done:
+                        self._render_card(body, order)
+        self._tag_scroll(body, body.scroll_tag)
+        if focus and focus[0] in self._card_widgets:
+            widget = self._card_widgets[focus[0]].get(focus[1])
+            if widget is not None:
+                widget.focus_set()
+                if isinstance(widget, ttk.Entry):
+                    widget.select_range(0, "end")
 
-        self.purchaser_entry = ttk.Entry(row, textvariable=self.var_purchaser,
-                                         style="Ticket.TEntry", width=12)
-        self.purchaser_entry.pack(side="left", fill="x", expand=True)
-        Placeholder(self.purchaser_entry, self.var_purchaser, "Who bought?")
-        word("bought")
-        self.qty_entry = ttk.Entry(row, textvariable=self.var_qty, style="Ticket.TEntry",
-                                   width=6, justify="right")
-        self.qty_entry.pack(side="left")
-        Placeholder(self.qty_entry, self.var_qty, "Qty")
-        word(var=self.var_qty_label)
-        self.product_combo = ttk.Combobox(row, textvariable=self.var_product,
-                                          state="readonly", style="Ticket.TCombobox",
-                                          width=15)
-        self.product_combo.pack(side="left")
-        word("paid with")
-        self.method_combo = ttk.Combobox(
-            row, textvariable=self.var_method, state="readonly",
-            style="Ticket.TCombobox", width=7,
-            values=[format_payment_method(m) for m in PAYMENT_METHODS],
-        )
-        self.method_combo.pack(side="left")
-        ttk.Button(row, text="Log order", style="Primary.TButton",
-                   command=self.log_order).pack(side="left", padx=(14, 0))
+    def _toggle_collected(self) -> None:
+        self._show_collected = not self._show_collected
+        self._render_counter()
 
-        under = ttk.Frame(card, style="Card.TFrame")
-        under.pack(fill="x", pady=(6, 0))
-        # The order form's error belongs under the order form.
-        ttk.Label(under, textvariable=self.var_error, style="CardError.TLabel").pack(
-            side="left"
-        )
-        ttk.Label(under, text="LOG A SALE  ·  Enter logs it",
-                  style="CardCaption.TLabel").pack(side="right")
+    def _render_card(self, body: ttk.Frame, order: Order) -> None:
+        border, card = self.card(body, padding=(18, 14, 18, 14))
+        border.pack(fill="x", pady=(0, 10))
+        widgets: dict[str, tk.Misc] = {}
+        self._card_widgets[order.id] = widgets
+        unit = "" if order.product_unit == "each" else f" {order.product_unit}"
 
-    def _build_workspace(self, parent: ttk.Frame) -> None:
-        wrap = ttk.Frame(parent, style="Page.TFrame")
+        top = ttk.Frame(card, style="Card.TFrame")
+        top.pack(fill="x")
+        text = ttk.Frame(top, style="Card.TFrame")
+        text.pack(side="left", fill="x", expand=True)
+        ttk.Label(text, text=order.purchaser, style="CardTitle.TLabel").pack(anchor="w")
+        meta = (f"{order.product_name}  ·  paid by "
+                f"{format_payment_method(order.payment_method)}  ·  "
+                f"{friendly_stamp(order.created_at)}")
+        if not order.fulfilled:
+            meta += f"  ·  {format_money(order.uncollected)} still owed"
+        ttk.Label(text, text=meta, style="CardHint.TLabel", wraplength=520).pack(anchor="w")
+        count = ttk.Frame(top, style="Card.TFrame")
+        count.pack(side="right", anchor="n")
+        figures = ttk.Frame(count, style="Card.TFrame")
+        figures.pack(anchor="e")
+        ttk.Label(figures, text=format_qty(order.quantity_received),
+                  style="CardFigureBig.TLabel").pack(side="left")
+        ttk.Label(figures, text=f" / {format_qty(order.quantity_ordered)}",
+                  style="CardFigureMutedBig.TLabel").pack(side="left")
+        hint = (f"All {format_qty(order.quantity_ordered)}{unit} handed over"
+                if order.fulfilled else
+                f"{format_qty(order.remaining)}{unit} still to hand over")
+        ttk.Label(count, text=hint, style="CardHint.TLabel").pack(anchor="e")
+
+        bar = tk.Canvas(card, height=8, bd=0, highlightthickness=0)
+        self.paint(bar, bg="CARD")
+        bar.ratio = float(order.quantity_received / order.quantity_ordered)
+        bar.pack(fill="x", pady=(10, 12))
+        bar.bind("<Configure>", lambda _e, c=bar: self._draw_bar(c))
+        self._bars.append(bar)
+
+        if self._open_card == order.id:
+            box = ttk.Frame(card, style="Subtle.TFrame", padding=12)
+            box.pack(fill="x")
+            row = ttk.Frame(box, style="Subtle.TFrame")
+            row.pack(fill="x")
+            minus = ttk.Button(row, text="−", style="SubtleStep.TButton",
+                               command=lambda: self.step_received(-1))
+            minus.pack(side="left")
+            entry = ttk.Entry(row, textvariable=self.var_got, style="Ticket.TEntry",
+                              width=6, justify="center", font=self.font_big_figure)
+            entry.pack(side="left", padx=8, ipady=2)
+            entry.bind("<Return>", lambda _e: self.update_received())
+            entry.bind("<Escape>", lambda _e: self.close_card())
+            plus = ttk.Button(row, text="+", style="SubtleStep.TButton",
+                              command=lambda: self.step_received(1))
+            plus.pack(side="left")
+            all_btn = ttk.Button(row, text=f"All {format_qty(order.quantity_ordered)}",
+                                 style="Primary.TButton", command=self.mark_all_received)
+            all_btn.pack(side="left", padx=(10, 0))
+            ttk.Button(row, text="Done", style="Ghost.TButton",
+                       command=self.close_card).pack(side="right")
+            if order.quantity_received <= 0:
+                minus.state(["disabled"])
+            if order.fulfilled:
+                plus.state(["disabled"])
+                all_btn.state(["disabled"])
+            error = ttk.Label(box, text=self._card_error, style="CounterError.TLabel",
+                              wraplength=520)
+            if self._card_error:
+                error.pack(anchor="w", pady=(6, 0))
+                entry.configure(style="Bad.TEntry")
+            widgets.update(minus=minus, entry=entry, plus=plus, all=all_btn)
+        else:
+            actions = ttk.Frame(card, style="Card.TFrame")
+            actions.pack(fill="x")
+            label, style = ("Adjust", "Ghost.TButton") if order.fulfilled else \
+                ("Hand over", "Primary.TButton")
+            open_btn = ttk.Button(actions, text=label, style=style,
+                                  command=lambda i=order.id: self.open_card(i))
+            open_btn.pack(side="left")
+            edit_btn = ttk.Button(actions, text="Edit", style="Ghost.TButton",
+                                  command=lambda i=order.id: self._edit_card(i))
+            edit_btn.pack(side="left", padx=(8, 0))
+            widgets.update(open=open_btn, edit=edit_btn)
+
+    def open_card(self, order_id: int) -> None:
+        """Unfold the hand-over stepper on one card; only one is open at a time."""
+        try:
+            order = self.tracker.get_order(order_id)
+        except TrackerError:
+            return
+        self._open_card = order_id
+        self.selected_order_id = order_id
+        self._card_error = ""
+        self.var_got.set(format_qty(order.quantity_received))
+        self._render_counter(focus=(order_id, "plus"))
+
+    def close_card(self) -> None:
+        closing = self._open_card
+        self._open_card = None
+        self._card_error = ""
+        self._render_counter(focus=(closing, "open") if closing is not None else None)
+
+    def _edit_card(self, order_id: int) -> None:
+        self.selected_order_id = order_id
+        self.open_order_editor()
+
+    # ---------------------------------------------------------- details page
+
+    def _build_details_page(self) -> ttk.Frame:
+        page, _head = self._page_frame("details", "Details")
+
+        border, card = self.card(page, padding=(14, 12, 14, 10))
+        border.pack(fill="x", pady=(0, 12))
+        line = ttk.Frame(card, style="Card.TFrame")
+        line.pack(fill="x")
+        ttk.Label(line, text="LOG", style="CardCaption.TLabel").pack(side="left", padx=(0, 10))
+        self.cmd_entry = ttk.Entry(line, textvariable=self.var_cmd, style="Ticket.TEntry",
+                                   font=self.font_figures)
+        self.cmd_entry.pack(side="left", fill="x", expand=True, ipady=1)
+        self.cmd_entry.bind("<Return>", lambda _e: self.run_cmd())
+        self.cmd_entry.bind("<Escape>", lambda _e: self.var_cmd.set(""))
+        Placeholder(self.cmd_entry, self.var_cmd,
+                    "Jim Carter, 10, Honey, venmo   (product and paid-by optional)")
+        ttk.Button(line, text="Log", style="Primary.TButton",
+                   command=self.run_cmd).pack(side="left", padx=(10, 0))
+        self.cmd_preview = ttk.Label(card, textvariable=self.var_cmd_preview,
+                                     style="CardHint.TLabel", font=self.font_figures)
+        self.cmd_preview.pack(anchor="w", pady=(6, 0))
+
+        wrap = ttk.Frame(page, style="Page.TFrame")
         wrap.pack(fill="both", expand=True)
-        wrap.columnconfigure(0, weight=1)
-        wrap.rowconfigure(0, weight=1)
-
         border, card = self.card(wrap, padding=0)
-        border.grid(row=0, column=0, sticky="nsew")
+        border.pack(fill="both", expand=True)
         bar = ttk.Frame(card, style="Card.TFrame", padding=(14, 12, 14, 12))
         bar.pack(fill="x")
         self._pills: dict[str, ttk.Radiobutton] = {}
@@ -1819,10 +2046,16 @@ class SalesApp(tk.Tk):
                                    takefocus=True)
             pill.pack(side="left", padx=(0, 6))
             self._pills[value] = pill
-        self.search_entry = ttk.Entry(bar, textvariable=self.var_search,
-                                      style="Search.TEntry", width=28)
-        self.search_entry.pack(side="right")
-        Placeholder(self.search_entry, self.var_search, "Search buyers or products")
+        self.product_filter = ttk.Combobox(
+            bar, textvariable=self.var_product_filter, state="readonly",
+            style="Ticket.TCombobox", width=16,
+        )
+        self.product_filter.pack(side="left", padx=(12, 0))
+        self.product_filter.bind("<<ComboboxSelected>>", lambda _e: self.refresh())
+        self.details_search = ttk.Entry(bar, textvariable=self.var_search,
+                                        style="Search.TEntry", width=26)
+        self.details_search.pack(side="right")
+        Placeholder(self.details_search, self.var_search, "Search  /")
         self._hairline(card)
 
         table = ttk.Frame(card, style="Card.TFrame")
@@ -1830,19 +2063,18 @@ class SalesApp(tk.Tk):
         table.columnconfigure(0, weight=1)
         table.rowconfigure(0, weight=1)
         self.tree = ttk.Treeview(table, columns=self.COLUMNS, show="headings",
-                                 displaycolumns=self.DISPLAY,
-                                 style="List.Treeview", selectmode="browse")
+                                 style="Ledger.Treeview", selectmode="browse")
         for key, (title, width, anchor) in self.HEADINGS.items():
             self.tree.heading(key, text=title, anchor=anchor,
                               command=lambda k=key: self.sort_by(k))
-            self.tree.column(key, width=width, minwidth=60, anchor=anchor, stretch=True)
+            self.tree.column(key, width=width, minwidth=40, anchor=anchor, stretch=True)
         scroll = ttk.Scrollbar(table, orient="vertical", command=self.tree.yview,
                                style="Page.Vertical.TScrollbar")
         self.tree.configure(yscrollcommand=scroll.set)
         self.tree.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns")
         self._tag_rows()
-        self._fit_columns(self.tree, {k: self.HEADINGS[k][1] for k in self.DISPLAY})
+        self._fit_columns(self.tree, {k: v[1] for k, v in self.HEADINGS.items()})
         bind_wheel_scroll(self.tree)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.tree.bind("<Double-1>", self.begin_edit)
@@ -1851,20 +2083,45 @@ class SalesApp(tk.Tk):
             self.tree.bind(sequence, lambda _e: self.step_received(1))
         for sequence in ("<minus>", "<KP_Subtract>"):
             self.tree.bind(sequence, lambda _e: self.step_received(-1))
+        self.tree.bind("<Key-a>", lambda _e: self.mark_all_received())
+        self.tree.bind("<Key-e>", lambda _e: self.open_order_editor())
+        self.tree.bind("<Key-n>", lambda _e: self.cmd_entry.focus_set())
+        self.tree.bind("<Key-slash>", lambda _e: self._focus_search())
         self.empty_label = ttk.Label(table, style="Empty.TLabel", justify="center")
 
-        inspector_border, self.inspector = self.card(wrap, padding=(20, 20, 20, 16))
-        inspector_border.configure(width=self.INSPECTOR_WIDTH)
-        inspector_border.pack_propagate(False)
-        inspector_border.grid(row=0, column=1, sticky="ns", padx=(16, 0))
-        self._build_inspector()
+        foot = ttk.Frame(card, style="Card.TFrame", padding=(14, 8, 14, 10))
+        foot.pack(fill="x")
+        ttk.Button(foot, text="All received", style="Ghost.TButton",
+                   command=self.mark_all_received).pack(side="left")
+        ttk.Button(foot, text="Edit order", style="Ghost.TButton",
+                   command=self.open_order_editor).pack(side="left", padx=(8, 0))
+        ttk.Label(foot, text="PAID BY", style="CardCaption.TLabel").pack(
+            side="left", padx=(18, 6)
+        )
+        self.row_method = tk.StringVar()
+        self.row_method_combo = ttk.Combobox(
+            foot, textvariable=self.row_method, state="readonly",
+            style="Ticket.TCombobox", width=7,
+            values=[format_payment_method(m) for m in PAYMENT_METHODS],
+        )
+        self.row_method_combo.pack(side="left")
+        self.row_method_combo.bind("<<ComboboxSelected>>", lambda _e: self._change_method())
+        self.status_label = ttk.Label(foot, textvariable=self.var_status,
+                                      style="CardHint.TLabel")
+        self.status_label.pack(side="right")
+        return page
+
+    def _say(self, message: str, bad: bool = False) -> None:
+        """The Details status line: what just happened, or why it did not."""
+        self.var_status.set(message)
+        self.status_label.configure(style="CardError.TLabel" if bad else "CardHint.TLabel")
 
     @staticmethod
     def _fit_columns(tree: ttk.Treeview, widths: dict[str, int]) -> None:
         """Share the list's width between its columns in fixed proportions.
 
         A Treeview does not shrink its columns to fit: narrower than their
-        sum, it simply cuts off the last ones, which hid Paid by entirely.
+        sum, it simply cuts off the last ones.
         """
         total = sum(widths.values())
 
@@ -1878,147 +2135,89 @@ class SalesApp(tk.Tk):
     def _tag_rows(self) -> None:
         self.tree.tag_configure("done", background=RECEIVED_BG, foreground=MUTED)
 
-    # -------------------------------------------------------------- inspector
+    # The command line: "purchaser, quantity, product, paid by".
 
-    def _build_inspector(self) -> None:
-        box = self.inspector
-        self.insp_empty = ttk.Frame(box, style="Card.TFrame")
-        ttk.Label(self.insp_empty, text="Nothing selected",
-                  style="CardTitle.TLabel").pack(pady=(90, 6))
-        ttk.Label(
-            self.insp_empty,
-            text="Pick an order to hand items over,\nchange how it was paid, or edit it.",
-            style="CardHint.TLabel", justify="center",
-        ).pack()
-
-        body = self.insp_body = ttk.Frame(box, style="Card.TFrame")
-        top = ttk.Frame(body, style="Card.TFrame")
-        top.pack(fill="x")
-        self.avatar = tk.Canvas(top, width=46, height=46, bd=0, highlightthickness=0)
-        self.paint(self.avatar, bg="CARD")
-        self.avatar.pack(side="left", anchor="n")
-        names = ttk.Frame(top, style="Card.TFrame")
-        names.pack(side="left", padx=(12, 0), fill="x", expand=True)
-        ttk.Label(names, textvariable=self.var_i_name, style="CardTitle.TLabel",
-                  wraplength=200).pack(anchor="w")
-        ttk.Label(names, textvariable=self.var_i_product, style="CardHint.TLabel",
-                  wraplength=200).pack(anchor="w")
-        ttk.Label(names, textvariable=self.var_i_meta, style="CardHint.TLabel",
-                  wraplength=200).pack(anchor="w")
-
-        figures = ttk.Frame(body, style="Card.TFrame")
-        figures.pack(fill="x", pady=(12, 0))
-        ttk.Label(figures, textvariable=self.var_i_progress,
-                  style="CardFigureBig.TLabel").pack(side="left")
-        self.i_status = ttk.Label(figures, style="PillWarn.TLabel")
-        self.i_status.pack(side="right")
-        self.i_bar = tk.Canvas(body, height=10, bd=0, highlightthickness=0)
-        self.paint(self.i_bar, bg="CARD")
-        self.i_bar.pack(fill="x", pady=(8, 0))
-        self.i_bar.bind("<Configure>", lambda _e: self._draw_bar(self.i_bar))
-        self._bars.append(self.i_bar)
-
-        ttk.Label(body, text="HAND OVER", style="CardCaption.TLabel").pack(
-            anchor="w", pady=(12, 5)
-        )
-        stepper = ttk.Frame(body, style="Card.TFrame")
-        stepper.pack(fill="x")
-        self.btn_minus = ttk.Button(stepper, text="−", style="Step.TButton",
-                                    command=lambda: self.step_received(-1))
-        self.btn_minus.pack(side="left")
-        self.got_entry = ttk.Entry(stepper, textvariable=self.var_got,
-                                   style="Ticket.TEntry", width=6, justify="center",
-                                   font=self.font_figures)
-        self.got_entry.pack(side="left", padx=6, ipady=1)
-        self.got_entry.bind("<Return>", lambda _e: self.update_received())
-        self.got_entry.bind("<Escape>", lambda _e: self._on_select())
-        self.btn_plus = ttk.Button(stepper, text="+", style="Step.TButton",
-                                   command=lambda: self.step_received(1))
-        self.btn_plus.pack(side="left")
-        self.btn_all = ttk.Button(stepper, text="All", style="Primary.TButton",
-                                  command=self.mark_all_received)
-        self.btn_all.pack(side="right")
-        ttk.Label(body, textvariable=self.var_i_error, style="CardError.TLabel",
-                  wraplength=270).pack(anchor="w", pady=(2, 0))
-
-        self._hairline(body, pady=(4, 10))
-        money = ttk.Frame(body, style="Card.TFrame")
-        money.pack(fill="x")
-        for column, (key, caption) in enumerate(
-            (("total", "VALUE"), ("collected", "COLLECTED"), ("owed", "STILL OWED"))
-        ):
-            money.columnconfigure(column, weight=1)
-            ttk.Label(money, text=caption, style="CardCaption.TLabel").grid(
-                row=0, column=column, sticky="w"
+    def _parse_cmd(self) -> dict[str, str]:
+        parts = [part.strip() for part in self.var_cmd.get().split(",")]
+        if len(parts) < 2 or not parts[0] or not parts[1]:
+            raise TrackerError(
+                "Need at least a purchaser and a quantity, separated by a comma."
             )
-            ttk.Label(money, textvariable=self.var_i_money[key],
-                      style="CardFigure.TLabel").grid(row=1, column=column, sticky="w")
+        return {
+            "purchaser": parts[0], "quantity": parts[1],
+            "product": parts[2] if len(parts) > 2 and parts[2] else None,
+            "payment_method": parts[3] if len(parts) > 3 and parts[3] else CASH,
+        }
 
-        pills = ttk.Frame(body, style="Card.TFrame")
-        pills.pack(fill="x", pady=(12, 10))
-        ttk.Label(pills, text="PAID BY", style="CardCaption.TLabel").pack(
-            side="left", padx=(0, 10)
-        )
-        for method in PAYMENT_METHODS:
-            ttk.Radiobutton(pills, text=format_payment_method(method), value=method,
-                            variable=self.var_i_method, style="Pill.TRadiobutton",
-                            command=self._change_method).pack(side="left", padx=(0, 6))
-
-        actions = ttk.Frame(body, style="Card.TFrame")
-        actions.pack(side="bottom", fill="x")
-        ttk.Button(actions, text="Edit order", style="Ghost.TButton",
-                   command=self.open_order_editor).pack(side="left")
-        ttk.Button(actions, text="Their orders", style="Ghost.TButton",
-                   command=self._show_buyer).pack(side="left", padx=(8, 0))
-
-    def _inspected(self):
-        if self.selected_order_id is None:
-            return None
-        try:
-            return self.tracker.get_order(self.selected_order_id)
-        except TrackerError:
-            return None
-
-    def _render_inspector(self) -> None:
-        order = self._inspected()
-        if order is None:
-            self.insp_body.pack_forget()
-            self.insp_empty.pack(fill="both", expand=True)
+    def _preview_cmd(self) -> None:
+        if not hasattr(self, "cmd_preview"):
             return
-        self.insp_empty.pack_forget()
-        self.insp_body.pack(fill="both", expand=True)
-
-        self.var_i_name.set(order.purchaser)
-        self.var_i_product.set(
-            f"{order.product_name}  ·  {format_money(order.unit_price)} "
-            f"per {order.product_unit}"
-        )
-        if order.fulfilled:
-            self.i_status.configure(text="RECEIVED", style="PillOk.TLabel")
+        text = self.var_cmd.get().strip()
+        style = "CardHint.TLabel"
+        if not text:
+            message = ("Type a purchaser, quantity, product and paid-by separated "
+                       "by commas, then press Enter.")
         else:
-            self.i_status.configure(
-                text=f"{format_qty(order.remaining)} STILL DUE", style="PillWarn.TLabel"
-            )
-        ratio = float(order.quantity_received / order.quantity_ordered)
-        self.i_bar.ratio = ratio
-        self._draw_bar(self.i_bar)
-        self.var_i_progress.set(
-            f"{format_qty(order.quantity_received)} / "
-            f"{format_qty(order.quantity_ordered)} {order.product_unit}"
+            try:
+                fields = self._parse_cmd()
+                products = self.tracker.list_products()
+                if fields["product"] is None:
+                    if len(products) != 1:
+                        raise TrackerError(
+                            "Choose which product: "
+                            + ", ".join(p.name for p in products)
+                        )
+                    product = products[0]
+                else:
+                    product = self.tracker.find_product(fields["product"])
+                qty = parse_quantity(fields["quantity"])
+                method = parse_payment_method(fields["payment_method"])
+                message = (f"→ {fields['purchaser']}  ·  {format_qty(qty)} {product.unit} "
+                           f"{product.name}  ·  {format_payment_method(method)}  ·  "
+                           f"{format_money(qty * product.unit_price)}    Enter to log")
+                style = "Good.TLabel"
+            except TrackerError as exc:
+                message = str(exc)
+                style = "CardError.TLabel"
+        self.var_cmd_preview.set(message)
+        # Good.TLabel sits on PANEL; the preview sits on a card.
+        self.cmd_preview.configure(
+            style={"Good.TLabel": "CardGood.TLabel"}.get(style, style)
         )
-        self.var_i_money["total"].set(format_money(order.total))
-        self.var_i_money["collected"].set(format_money(order.collected))
-        self.var_i_money["owed"].set(format_money(order.uncollected))
-        self.var_i_method.set(order.payment_method)
-        self.var_i_meta.set(f"#{order.id}  ·  {friendly_stamp(order.created_at)}")
-        self.btn_minus.state(["disabled"] if order.quantity_received <= 0 else ["!disabled"])
-        for button in (self.btn_plus, self.btn_all):
-            button.state(["disabled"] if order.fulfilled else ["!disabled"])
 
-        self.avatar.delete("all")
-        self.avatar.create_oval(1, 1, 45, 45, fill=ACCENT_SOFT, outline="")
-        self.avatar.create_text(23, 23, text=initials(order.purchaser),
-                                fill=ACCENT, font=self.font_avatar)
+    def run_cmd(self) -> None:
+        try:
+            fields = self._parse_cmd()
+            order = self.tracker.add_order(**fields)
+        except TrackerError as exc:
+            self._say(str(exc), bad=True)
+            return
+        self.var_cmd.set("")
+        self.var_filter.set("all")
+        self.var_product_filter.set(self.EVERY_PRODUCT)
+        self.var_search.set("")
+        self._say(f"Logged #{order.id} {order.purchaser}  ·  "
+                  f"{format_qty(order.quantity_ordered)} {order.product_unit} "
+                  f"{order.product_name}  ·  {format_payment_method(order.payment_method)}")
+        self._flash(f"Logged {order.purchaser}")
+        self.refresh(select_id=order.id)
+
+    BAR_CELLS = 6
+    # Tk paints one foreground per row, so the bar must read monochrome.
+    # U+25A0/U+25A1 are equal-width and present in Segoe UI for the Windows exe.
+    BAR_FULL = "■"
+    BAR_EMPTY = "□"
+
+    @classmethod
+    def _bar(cls, received: Decimal, ordered: Decimal) -> str:
+        """Fixed-width text progress bar for the Buyers grid."""
+        if ordered <= 0:
+            return cls.BAR_EMPTY * cls.BAR_CELLS
+        filled = int((received / ordered) * cls.BAR_CELLS)
+        filled = max(0, min(cls.BAR_CELLS, filled))
+        if filled == 0 and received > 0:
+            filled = 1
+        return cls.BAR_FULL * filled + cls.BAR_EMPTY * (cls.BAR_CELLS - filled)
 
     def _draw_bar(self, canvas: tk.Canvas) -> None:
         """A rounded progress bar sized to the canvas; ratio is kept on it."""
@@ -2042,38 +2241,31 @@ class SalesApp(tk.Tk):
 
     def step_received(self, delta: int) -> str:
         """Hand over one more (or take one back) on the selected order."""
-        order = self._inspected()
-        if order is None:
+        order_id = self._selected_id()
+        if order_id is None:
             return "break"
+        order = self.tracker.get_order(order_id)
         target = order.quantity_received + delta
         target = max(Decimal("0"), min(order.quantity_ordered, target))
         if target == order.quantity_received:
             return "break"
         self.var_got.set(format_qty(target))
-        self.update_received()
+        self.update_received(refocus="plus" if delta > 0 else "minus")
         return "break"
 
     def _change_method(self) -> None:
-        order = self._inspected()
-        if order is None:
+        order_id = self._selected_id()
+        if order_id is None:
+            self._say("Select a row first.", bad=True)
             return
         try:
-            order = self.tracker.set_payment_method(order.id, self.var_i_method.get())
+            order = self.tracker.set_payment_method(order_id, self.row_method.get())
         except TrackerError as exc:
-            self.var_i_error.set(str(exc))
+            self._say(str(exc), bad=True)
             return
-        self._flash(
-            f"{order.purchaser} — now paid by "
-            f"{format_payment_method(order.payment_method)}"
-        )
+        self._say(f"{order.purchaser} now paid by "
+                  f"{format_payment_method(order.payment_method)}.")
         self.refresh(select_id=order.id)
-
-    def _show_buyer(self) -> None:
-        order = self._inspected()
-        if order is None:
-            return
-        self.show_page("buyers")
-        self.var_buyer_search.set(order.purchaser)
 
     # ------------------------------------------------------------ buyers page
 
@@ -2096,14 +2288,19 @@ class SalesApp(tk.Tk):
         table.columnconfigure(0, weight=1)
         table.rowconfigure(0, weight=1)
         columns = ("product", "progress", "owed", "status", "method")
+        headings = {
+            "product": ("Orders", 150, "w"),
+            "progress": ("Received / ordered", 170, "w"),
+            "owed": ("Still owed", 95, "e"),
+            "status": ("Status", 105, "w"),
+            "method": ("Paid by", 80, "w"),
+        }
         self.buyers_tree = ttk.Treeview(table, columns=columns, show="tree headings",
                                         style="List.Treeview", selectmode="browse")
         self.buyers_tree.heading("#0", text="Buyer", anchor="w")
         self.buyers_tree.column("#0", width=210, minwidth=120, stretch=True)
         for key in columns:
-            title, width, anchor = self.HEADINGS[key]
-            if key == "product":
-                title = "Orders"
+            title, width, anchor = headings[key]
             self.buyers_tree.heading(key, text=title, anchor=anchor)
             self.buyers_tree.column(key, width=width, minwidth=60, anchor=anchor,
                                     stretch=True)
@@ -2113,7 +2310,7 @@ class SalesApp(tk.Tk):
         self.buyers_tree.configure(yscrollcommand=scroll.set)
         self.buyers_tree.grid(row=0, column=0, sticky="nsew")
         self._fit_columns(self.buyers_tree, {
-            "#0": 210, **{k: self.HEADINGS[k][1] for k in columns}
+            "#0": 210, **{k: headings[k][1] for k in columns}
         })
         scroll.grid(row=0, column=1, sticky="ns")
         bind_wheel_scroll(self.buyers_tree)
@@ -2188,8 +2385,9 @@ class SalesApp(tk.Tk):
             return "break"
         order_id = int(selection[0])
         self.var_filter.set("all")
+        self.var_product_filter.set(self.EVERY_PRODUCT)
         self.var_search.set("")
-        self.show_page("orders")
+        self.show_page("details")
         self.refresh(select_id=order_id)
         self.tree.focus_set()
         return "break"
@@ -2344,23 +2542,22 @@ class SalesApp(tk.Tk):
     # ---------------------------------------------------------------- binding
 
     def _binds(self) -> None:
-        self.bind("<Control-s>", lambda _e: self.log_order())
+        self.bind("<Control-s>", lambda _e: self.open_log_dialog())
         self.bind("<Control-n>", lambda _e: self.open_wizard())
         self.bind("<Control-comma>", lambda _e: self.open_settings())
         self.bind("<Control-e>", lambda _e: self.open_order_editor())
         self.bind("<Control-f>", lambda _e: self._focus_search())
         for number, (key, _title) in enumerate(self.PAGES, start=1):
             self.bind(f"<Control-Key-{number}>", lambda _e, k=key: self.show_page(k))
-        for widget in (self.purchaser_entry, self.qty_entry, self.product_combo,
-                       self.method_combo):
-            widget.bind("<Return>", lambda _e: self.log_order())
 
     def _focus_search(self) -> None:
         if self._page == "buyers":
             self.buyer_search_entry.focus_set()
-            return
-        self.show_page("orders")
-        self.search_entry.focus_set()
+        elif self._page == "details":
+            self.details_search.focus_set()
+        else:
+            self.show_page("counter")
+            self.search_entry.focus_set()
 
     # ------------------------------------------------------------- transitions
 
@@ -2385,10 +2582,26 @@ class SalesApp(tk.Tk):
     def open_money(self) -> None:
         self.show_page("money")
 
+    def open_log_dialog(self) -> LogSaleDialog | None:
+        if not self.tracker.list_products():
+            self.var_error.set("Establish a product first.")
+            return None
+        if self.log_dialog is not None and self.log_dialog.winfo_exists():
+            self.log_dialog.lift()
+            return self.log_dialog
+        self.var_error.set("")
+        self.log_dialog = LogSaleDialog(self, self.tracker)
+        self.product_combo = self.log_dialog.product_combo
+        self.method_combo = self.log_dialog.method_combo
+        return self.log_dialog
+
     def open_order_editor(self) -> OrderEditor | None:
         order_id = self._selected_id()
         if order_id is None:
-            self.var_error.set("Select an order on the list first.")
+            message = "Select an order on the list first."
+            self.var_error.set(message)
+            if self._page == "details":
+                self._say(message, bad=True)
             return None
         self.var_error.set("")
         return OrderEditor(self, self.tracker, order_id, on_saved=self._on_order_edited)
@@ -2455,26 +2668,32 @@ class SalesApp(tk.Tk):
     def _reload_products(self, select_name: str | None = None) -> list[Product]:
         products = self.tracker.list_products()
         names = [product.name for product in products]
-        self.product_combo["values"] = names
+        if self.product_combo is not None and self.product_combo.winfo_exists():
+            self.product_combo["values"] = names
         if select_name and select_name in names:
             self.var_product.set(select_name)
         elif names and self.var_product.get() not in names:
             self.var_product.set(names[0])
+        self.product_filter["values"] = [self.EVERY_PRODUCT] + names
+        if self.var_product_filter.get() not in self.product_filter["values"]:
+            self.var_product_filter.set(self.EVERY_PRODUCT)
         if products:
             self.need_product.pack_forget()
-            self.kpi_row.pack(side="right", anchor="s")
+            self.log_button.pack(side="right", anchor="s")
             self.order_form.pack(fill="both", expand=True)
         else:
             self.order_form.pack_forget()
-            self.kpi_row.pack_forget()
+            self.log_button.pack_forget()
             self.need_product.pack(fill="x")
             self.var_product.set("")
+        self.cmd_entry.state(["!disabled"] if products else ["disabled"])
         self._sync_qty_label()
         return products
 
     # ------------------------------------------------------------------ orders
 
     def log_order(self) -> None:
+        """Log a sale from the app's form variables (the Log a sale dialog)."""
         self.var_error.set("")
         try:
             order = self.tracker.add_order(
@@ -2488,40 +2707,71 @@ class SalesApp(tk.Tk):
             return
         self.var_purchaser.set("")
         self.var_qty.set("")
+        if self.log_dialog is not None and self.log_dialog.winfo_exists():
+            self.log_dialog.destroy()
         self._flash(
             f"Logged {order.purchaser} — {format_qty(order.quantity_ordered)} "
             f"{order.product_unit} of {order.product_name}"
         )
+        self.var_search.set("")
+        self.selected_order_id = order.id
         self.refresh(select_id=order.id)
-        self.purchaser_entry.focus_set()
 
     def _selected_id(self) -> int | None:
-        selection = self.tree.selection()
-        if not selection:
+        """The order the operator is working on: the open card, or the grid row."""
+        if self.selected_order_id is None:
             return None
-        return int(selection[0])
+        try:
+            self.tracker.get_order(self.selected_order_id)
+        except TrackerError:
+            self.selected_order_id = None
+        return self.selected_order_id
 
     def _on_select(self, _event: object = None) -> None:
-        order_id = self._selected_id()
-        self.selected_order_id = order_id
-        self.var_i_error.set("")
-        self.got_entry.configure(style="Ticket.TEntry")
-        order = self._inspected()
-        self.var_got.set(format_qty(order.quantity_received) if order else "")
-        self._render_inspector()
+        if self._refreshing:
+            return
+        selection = self.tree.selection()
+        self.selected_order_id = int(selection[0]) if selection else None
+        self._cancel_cell_editor()
+        order = self._selected_id()
+        if order is not None:
+            self.row_method.set(format_payment_method(self.tracker.get_order(order).payment_method))
 
     def begin_edit(self, _event: object = None) -> str | None:
-        """Put the cursor in the inspector's received box for the selected row."""
-        if self._inspected() is None:
+        """Type a received figure: the card's box on Counter, the cell on Details."""
+        order_id = self._selected_id()
+        if order_id is None:
             return None
-        self.got_entry.focus_set()
-        self.got_entry.select_range(0, "end")
+        if self._page != "details":
+            self.open_card(order_id)
+            self._render_counter(focus=(order_id, "entry"))
+            return "break"
+        self._cancel_cell_editor()
+        box = self.tree.bbox(str(order_id), "received")
+        if not box:
+            return None
+        x, y, width, height = box
+        self.var_got.set(format_qty(self.tracker.get_order(order_id).quantity_received))
+        editor = ttk.Entry(self.tree, textvariable=self.var_got, style="Cell.TEntry",
+                           font=self.font_figures, justify="right")
+        editor.place(x=x + 2, y=y + 2, width=width - 4, height=height - 4)
+        editor.focus_set()
+        editor.select_range(0, "end")
+        editor.bind("<Return>", lambda _e: self.update_received())
+        editor.bind("<Escape>", lambda _e: self._cancel_cell_editor())
+        self._editor = editor
         return "break"
 
-    def update_received(self) -> None:
-        """Commit the received figure for the selected row.
+    def _cancel_cell_editor(self) -> None:
+        if self._editor is not None and self._editor.winfo_exists():
+            self._editor.destroy()
+        self._editor = None
 
-        Works from the inspector's box or with ``var_got`` set directly.
+    def update_received(self, refocus: str = "entry") -> None:
+        """Commit ``var_got`` for the selected order.
+
+        A rejected figure stays where it was typed with the reason beside
+        it: on the open card, or in the grid's status line.
         """
         order_id = self._selected_id()
         if order_id is None:
@@ -2530,46 +2780,43 @@ class SalesApp(tk.Tk):
         try:
             order = self.tracker.set_received(order_id, self.var_got.get())
         except TrackerError as exc:
-            # Keep the figure where it was typed, with the reason under it.
-            self.var_i_error.set(str(exc))
-            self.got_entry.configure(style="Bad.TEntry")
-            self.got_entry.focus_set()
-            self.got_entry.select_range(0, "end")
+            if self._open_card == order_id:
+                self._card_error = str(exc)
+                self._render_counter(focus=(order_id, "entry"))
+            else:
+                self._say(str(exc), bad=True)
+                if self._editor is not None and self._editor.winfo_exists():
+                    self._editor.configure(style="Bad.TEntry")
+                    self._editor.focus_set()
+                    self._editor.select_range(0, "end")
             return
         self.var_error.set("")
-        self._flash(
-            f"{order.purchaser} — recorded {format_qty(order.quantity_received)} "
-            f"of {format_qty(order.quantity_ordered)}"
-        )
-        self.refresh(select_id=order.id)
+        self._card_error = ""
+        message = (f"{order.purchaser} — recorded {format_qty(order.quantity_received)} "
+                   f"of {format_qty(order.quantity_ordered)}")
+        self._flash(message)
+        self._say(message)
+        self.refresh(select_id=order.id, focus=refocus)
 
     def mark_all_received(self) -> None:
         order_id = self._selected_id()
         if order_id is None:
+            self._say("Select a row first.", bad=True)
             return
         try:
             order = self.tracker.mark_received(order_id)
         except TrackerError as exc:
-            self.var_i_error.set(str(exc))
+            self._say(str(exc), bad=True)
             return
+        self._card_error = ""
         self._flash(f"{order.purchaser} — marked fully received")
-        self.refresh(select_id=order.id)
+        self._say(f"{order.purchaser} marked fully received.")
+        self.refresh(select_id=order.id, focus="all")
 
     # ------------------------------------------------------------------ render
 
-    @classmethod
-    def _bar(cls, received: Decimal, ordered: Decimal) -> str:
-        """Fixed-width progress bar. Block glyphs share one advance width."""
-        if ordered <= 0:
-            return cls.BAR_EMPTY * cls.BAR_CELLS
-        filled = int((received / ordered) * cls.BAR_CELLS)
-        filled = max(0, min(cls.BAR_CELLS, filled))
-        if filled == 0 and received > 0:
-            filled = 1
-        return cls.BAR_FULL * filled + cls.BAR_EMPTY * (cls.BAR_CELLS - filled)
-
     def sort_by(self, column: str) -> None:
-        """Sort the list on a column; a second click on it reverses."""
+        """Sort the grid on a column; a second click on it reverses."""
         if self._sort and self._sort[0] == column:
             self._sort = (column, not self._sort[1])
         else:
@@ -2587,7 +2834,9 @@ class SalesApp(tk.Tk):
         self,
         select_id: int | None = None,
         select_product: str | None = None,
+        focus: str | None = None,
     ) -> None:
+        self._cancel_cell_editor()
         products = self._reload_products(select_product)
 
         search = self.var_search.get().strip() or None
@@ -2597,51 +2846,68 @@ class SalesApp(tk.Tk):
         except TrackerError as exc:
             self.var_error.set(str(exc))
             return
+        chosen = self.var_product_filter.get()
+        if chosen and chosen != self.EVERY_PRODUCT:
+            orders = [o for o in orders if o.product_name == chosen]
         if self._sort:
             column, reverse = self._sort
             orders.sort(key=self.SORT_KEYS[column], reverse=reverse)
         self._sync_headings()
 
-        keep = select_id if select_id is not None else self._selected_id()
-        self.tree.delete(*self.tree.get_children())
-        for order in orders:
-            done = order.fulfilled
-            self.tree.insert(
-                "", "end", iid=str(order.id),
-                values=(
-                    order.purchaser,
-                    order.product_name,
-                    f"{self._bar(order.quantity_received, order.quantity_ordered)}  "
-                    f"{format_qty(order.quantity_received)} / "
-                    f"{format_qty(order.quantity_ordered)}",
-                    "—" if done else format_money(order.uncollected),
-                    "received" if done else "outstanding",
-                    format_payment_method(order.payment_method),
-                ),
-                tags=("done",) if done else (),
+        if select_id is not None:
+            self.selected_order_id = select_id
+        keep = self._selected_id()
+        self._refreshing = True
+        try:
+            self.tree.delete(*self.tree.get_children())
+            for order in orders:
+                done = order.fulfilled
+                self.tree.insert(
+                    "", "end", iid=str(order.id),
+                    values=(
+                        order.id,
+                        order.purchaser,
+                        order.product_name,
+                        f"{format_qty(order.quantity_ordered)} {order.product_unit}",
+                        format_qty(order.quantity_received),
+                        "—" if done else format_qty(order.remaining),
+                        "—" if done else format_money(order.uncollected),
+                        "received" if done else "outstanding",
+                        format_payment_method(order.payment_method),
+                        friendly_stamp(order.created_at).split(",")[0],
+                    ),
+                    tags=("done",) if done else (),
+                )
+            if keep is not None and self.tree.exists(str(keep)):
+                self.tree.selection_set(str(keep))
+                self.tree.see(str(keep))
+            else:
+                self.tree.selection_set(())
+        finally:
+            self._refreshing = False
+        if keep is not None:
+            self.row_method.set(
+                format_payment_method(self.tracker.get_order(keep).payment_method)
             )
+        else:
+            self.row_method.set("")
 
         if orders:
             self.empty_label.place_forget()
         else:
             if not products:
                 text = "No products yet. Establish one to get started."
-            elif search or status != "all":
-                text = "Nothing matches this filter."
+            elif search or status != "all" or chosen != self.EVERY_PRODUCT:
+                text = "Nothing matches this view."
             else:
-                text = "No orders yet.\nLog your first sale above."
+                text = "No orders yet.\nLog one on the line above."
             self.empty_label.configure(text=text)
             self.empty_label.place(relx=0.5, rely=0.42, anchor="center")
 
-        if keep is not None and self.tree.exists(str(keep)):
-            self.tree.selection_set(str(keep))
-            self.tree.see(str(keep))
-        else:
-            self.tree.selection_set(())
-        self._on_select()
-
         self._update_stats(products)
-        if self._page != "orders":
+        card_focus = (keep, focus) if focus and keep is not None else None
+        self._render_counter(focus=card_focus)
+        if self._page not in ("counter", "details"):
             self._render_page(self._page)
 
     def _update_stats(self, products: list[Product]) -> None:
@@ -2651,13 +2917,6 @@ class SalesApp(tk.Tk):
         self.var_outstanding.set(str(summary.outstanding_count))
         self.var_received.set(str(summary.received_count))
         self.var_due.set(format_qty(summary.units_remaining))
-        for key, value in (
-            ("outstanding", str(summary.outstanding_count)),
-            ("due", format_qty(summary.units_remaining)),
-            ("owed", format_money(money.total_uncollected)),
-            ("cash", format_money(money.cash_collected)),
-        ):
-            self.kpi[key][0].set(value)
         for value, label, count in (
             ("all", "All", summary.order_count),
             ("outstanding", "Outstanding", summary.outstanding_count),
@@ -2666,16 +2925,22 @@ class SalesApp(tk.Tk):
             self._pills[value].configure(text=f"{label}   {count}")
         buyers = {o.purchaser.casefold() for o in self.tracker.list_orders()}
         for key, badge in (
-            ("orders", summary.outstanding_count or ""),
+            ("counter", summary.outstanding_count or ""),
+            ("details", ""),
             ("buyers", len(buyers) or ""),
             ("products", len(products) or ""),
             ("money", ""),
         ):
             self._nav[key]["badge"].configure(text=str(badge))
-        self.var_subs["orders"].set(
-            f"{summary.order_count} orders  ·  "
-            f"{format_money(summary.revenue)} ordered"
+        self.var_subs["counter"].set(
+            f"{summary.outstanding_count} waiting  ·  "
+            f"{format_money(money.total_uncollected)} still owed"
             if products else "Nothing to sell yet"
+        )
+        self.var_subs["details"].set(
+            f"{summary.order_count} orders  ·  {format_qty(summary.units_remaining)} "
+            f"units to hand out  ·  {format_money(money.total_uncollected)} owed  ·  "
+            f"{format_money(money.cash_collected)} cash collected"
         )
         self.var_subs["products"].set(
             f"{len(products)} on file" if products else "Nothing on file yet"
