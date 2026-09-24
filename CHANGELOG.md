@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Orders and products can be edited after they are saved. Edit order and
+  Edit product sit beside the list filters, in the Ledger menu, and Ctrl+E
+  edits the selected order. An order's purchaser, quantity, product, and
+  payment method can be corrected; the GUI previously had no way to change
+  a payment method at all. A product's name, unit, price, SKU, and notes can
+  be corrected. Quantity cannot drop below what has been received. A price
+  change that reprices existing orders, collected money included, asks
+  first. CLI: `edit order <id>` and `edit product <id>` (price changes on a
+  product with orders need `--yes`), and item 8 in the interactive menu.
 - Project governance set: `agents.md`, `spec.md`, `roadmap.md`, `context.md`,
   `CHANGELOG.md`, short `README.md`, and `.gitignore`.
 - Product setup wizard (GUI and interactive CLI) before orders can be logged.

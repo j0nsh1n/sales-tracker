@@ -5,8 +5,9 @@
 - App is a **SQLite ledger** with two entry points: interactive CLI
   (`sales_tracker.py`) and Tkinter UI (`gui.py`). Implementation lives in
   the `salestracker` package; root files are shims.
-- Tests: `python3 -m unittest test_sales_tracker.py` — 86 tests, green on
-  Windows and Linux. Packaged build: `python3 tools/smoke_test.py`.
+- Tests: `python3 -m unittest test_sales_tracker.py` — 106 tests, green on
+  Linux (cloud container, 3.14 via `uv python install 3.14`, GUI under
+  `xvfb-run`). Packaged build: `python3 tools/smoke_test.py`.
   Lint / types: **not configured**.
 - Frozen GUI: built by CI; `v*` tags attach Windows exe and Linux ELF to
   a GitHub Release. Binaries are not tracked in git.
@@ -45,6 +46,8 @@ Product 1---* Order
   ledger data and not cleared by either reset
 - Line total is computed: ordered × unit_price
 - Fulfilled when received >= ordered; the row stays
+- Editing: `edit_order()` / `edit_product()` change only the fields passed.
+  Received is not editable there, and ordered cannot go below received.
 - Deleting happens only in Settings: `delete_order()`, `delete_product()`
   (refused while orders reference the product), `reset_orders()`,
   `reset_all()`. The main list still has no delete control.
@@ -96,6 +99,10 @@ Product 1---* Order
   Tk 8.6's own bindings round sub-notch deltas to zero, which is why a
   touchpad moved nothing on Linux even in the order list. The list
   bindings return "break" so Tk's class binding cannot also fire.
+- Price is read from the product at query time; orders store none. Editing
+  a price therefore reprices every order for it, collected money included,
+  which moves the Money page's cash-collected figure. Both UIs confirm first
+  via `price_change_warning()`; the store itself does not refuse.
 - Payment methods are capitalised for display only. The ledger, the CSV,
   and the CLI's accepted input all stay lowercase.
 - Linux frozen binary was built natively here; Windows exe was Wine + CI.
@@ -112,16 +119,17 @@ Product 1---* Order
   headless runners.
 
 ## Session Handoff
-- **Date:** 2026-09-16
-- **Branch:** `main` (PR #7 merged, tagged v0.1.5)
-- **Done:** added a New product button to the header, released as 0.1.5.
-  Adding a second product previously needed Ctrl+N or the Ledger menu:
-  the only button for it belongs to the empty state and is swapped out
-  once a product exists.
-- **Verified:** 86 tests green locally and on the PR's CI (tests,
-  windows-exe, linux-elf). Checked by screenshot, and by removing the
-  button again to confirm the new tests fail with the reported symptom.
-- **Open:** the Wine path of the smoke test is still unrun. Coins not
-  handled. Extra payment methods (zelle/card) need a spec line. History
-  still holds 30 MB of old binaries. `docs/design/` remains untracked.
-- **Next:** nothing outstanding; 0.1.5 is the current release.
+- **Date:** 2026-09-24
+- **Branch:** `claude/loving-sagan-cstbui` (from `main` at v0.1.5)
+- **Done:** edit orders and products after saving. Store `edit_order`,
+  `edit_product`, `price_change_warning`; CLI `edit order|product` and
+  interactive menu item 8; GUI `OrderEditor` / `ProductEditor` dialogs
+  from the filter row, Ledger menu, and Ctrl+E. spec.md gained an Edit
+  bullet and two acceptance criteria, approved by the human this session.
+- **Verified:** 106 tests green under xvfb (34 skip headless). Dialogs
+  checked by screenshot in light and dark at the minimum window width.
+- **Open:** Price is not snapshotted per order, so repricing is warned
+  about, not prevented. The editable unit combobox's arrow stays light in
+  dark mode (wizard too). Coins, zelle/card, history binaries as before.
+- **Next:** review and merge the branch; decide on per-order price
+  snapshots (schema v4) if repricing old orders is unwanted.

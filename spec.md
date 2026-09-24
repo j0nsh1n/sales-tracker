@@ -31,6 +31,16 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
   Received must be ≥ 0 and ≤ ordered. Marking the name received (received
   ≥ ordered) does **not** remove the row. Filter the list: all /
   outstanding / received. Search by purchaser or product name.
+- **Edit:** a logged order's purchaser, quantity ordered, product, and
+  payment method can be corrected. Quantity ordered cannot drop below what
+  has already been received; received itself is changed only through the
+  received-so-far box. A product's name, unit, price, SKU, and notes can be
+  corrected, and duplicate names are still rejected. Price lives on the
+  product, so a new price reprices every order for it, money already
+  collected included: when orders exist, the operator is told so and must
+  confirm (GUI: a yes/no prompt; CLI: `--yes`, or answering yes in the
+  interactive session). Editing never removes a row. A rejected edit writes
+  nothing.
 - **Orders never disappear from the main list.** There is no per-order
   delete control on the order list in the GUI or CLI. Removing a row is a
   Settings-level action only (see below).
@@ -78,11 +88,12 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
   - Desktop: `python3 gui.py`
   - Script: `python3 sales_tracker.py` (interactive menu) or subcommands
     (`product`, `order`, `receive`, `list`, `summary`, `money`, `export`,
-    `pay`, `delete`, `reset`, …)
+    `pay`, `edit`, `delete`, `reset`, …)
 - GUI: product wizard on first run if the catalog is empty; order ticket
   (purchaser + quantity); list with received/ordered; a separate
-  received-so-far box for the selected row; Settings in the Ledger menu
-  and header. Settings holds the Appearance choice, and the order and
+  received-so-far box for the selected row; Edit order and Edit product
+  beside the list filters (also in the Ledger menu, and Ctrl+E for the
+  selected order); Settings in the Ledger menu and header. Settings holds the Appearance choice, and the order and
   product delete pickers behind a typed `RESET` unlock.
 - CLI interactive session asks one question at a time for product setup,
   logging, and received-so-far updates.
@@ -182,6 +193,11 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
 - [x] Settings is the only place any record can be removed
 - [x] CLI and GUI share one SQLite ledger
 - [x] Every order records how it is paid; existing ledgers default to cash
+- [x] An order's purchaser, quantity, product, and payment method, and a
+      product's name, unit, price, SKU, and notes, can be corrected from the
+      GUI and the CLI; quantity cannot drop below received
+- [x] A price change that would reprice existing orders requires an
+      explicit confirmation
 - [x] Expected money is split into cash and non-cash, collected and not
 - [x] A bill count is compared against cash collected only, and reports
       balanced / over / short

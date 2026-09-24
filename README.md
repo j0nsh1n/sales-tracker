@@ -22,6 +22,8 @@ python3 sales_tracker.py money
 python3 sales_tracker.py money --count --n20 3 --n10 1 --n5 1
 python3 sales_tracker.py export --out sales.csv
 python3 sales_tracker.py pay 2 cash
+python3 sales_tracker.py edit order 1 --buyer Jimmy --qty 12
+python3 sales_tracker.py edit product 1 --price 14 --yes
 python3 sales_tracker.py delete order 1 --yes
 python3 sales_tracker.py delete product 1 --yes
 python3 sales_tracker.py reset --orders --yes
@@ -45,6 +47,14 @@ is remembered in `sales.db` and is not cleared by a reset.
 **Export CSV** writes every order as a row, followed by a totals block.
 Payment methods read as `Cash` and `Venmo` on screen but stay lowercase in
 the CSV and on the CLI, which is what those commands take as input.
+
+**Fix a mistake** with Edit order or Edit product next to the list filters
+(Ctrl+E edits the selected order), menu item 8 in the interactive script, or
+`edit` on the CLI. Only what you change is changed. An order's quantity
+cannot go below what has already been handed out. Price belongs to the
+product, so changing it reprices every order for that product, including
+money you have already collected — the app asks before doing that, and the
+CLI needs `--yes`.
 
 Rows are never removed from the main list. Deleting one order or one product
 happens in Settings (GUI) or the Settings menu / `delete` command (CLI). A
