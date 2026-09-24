@@ -130,7 +130,9 @@ Product 1---* Order
   the download, which Windows and Linux both allow; the Windows path is
   reasoned about, not run here. CI attaches `update.json` in a
   `release-manifest` job and refuses a `v*` tag that differs from
-  `_version.py`.
+  `_version.py`. Releases can also be cut from the Actions tab: Run
+  workflow with `release_tag` creates the tag at that commit (a cloud
+  session's git credential cannot push tags, which is why this exists).
 - Payment methods are capitalised for display only. The ledger, the CSV,
   and the CLI's accepted input all stay lowercase.
 - Linux frozen binary was built natively here; Windows exe was Wine + CI.

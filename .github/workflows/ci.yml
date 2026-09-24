@@ -6,7 +6,19 @@ on:
     branches: [main]
     tags:
       - "v*"
+  # Run workflow from the Actions tab with a tag name to cut a release
+  # without a local git: the tag is created at the chosen commit and the
+  # binaries and update.json are attached, the same as pushing the tag.
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to create, e.g. v0.2.0 (leave empty for a plain run)"
+        required: false
+        default: ""
+
+env:
+  # The release this run is for: the pushed tag, or the dispatch input.
+  RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.release_tag }}
 
 permissions:
   contents: write
@@ -30,11 +42,11 @@ jobs:
       # The updater compares the manifest's version with __version__, so a
       # release whose tag disagrees with the code would never be offered.
       - name: Check the tag matches __version__
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         run: |
           python - <<'EOF'
           import os, sys, salestracker
-          tag = os.environ["GITHUB_REF_NAME"].lstrip("v")
+          tag = os.environ["RELEASE_TAG"].lstrip("v")
           if tag != salestracker.__version__:
               sys.exit(f"tag {tag} does not match __version__ {salestracker.__version__}")
           EOF
@@ -70,9 +82,11 @@ jobs:
           if-no-files-found: error
 
       - name: Attach exe to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
           files: dist/SalesTracker.exe
 
   linux-elf:
@@ -112,15 +126,17 @@ jobs:
           if-no-files-found: error
 
       - name: Attach ELF to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
           files: dist/SalesTracker-linux-x86_64
 
   # The update manifest: what the app's updater reads. It needs both
   # binaries' checksums, so it runs after the two builds.
   release-manifest:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
     needs: [windows-exe, linux-elf]
     runs-on: ubuntu-latest
     steps:
@@ -143,8 +159,8 @@ jobs:
       - name: Write update.json
         run: |
           python -m salestracker.update write-manifest \
-            --version "$GITHUB_REF_NAME" \
-            --base-url "https://github.com/${{ github.repository }}/releases/download/$GITHUB_REF_NAME/" \
+            --version "$RELEASE_TAG" \
+            --base-url "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/" \
             --notes-from CHANGELOG.md \
             dist/SalesTracker.exe dist/SalesTracker-linux-x86_64 > update.json
           cat update.json
@@ -152,4 +168,6 @@ jobs:
       - name: Attach update.json to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
           files: update.json
