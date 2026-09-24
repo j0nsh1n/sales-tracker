@@ -1,0 +1,491 @@
+<meta charset="utf-8">
+<title>Counter</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap">
+<link rel="stylesheet" href="shared.css">
+<style>
+  /* Direction A — Counter. One column, one list, one big action. */
+  :root { --radius: 10px; }
+  body { font-size: 17px; }
+  .a-app { max-width: 700px; margin: 0 auto; padding: 24px 16px 96px; display: grid; gap: 20px; }
+  .a-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .a-head h1 { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; }
+  .a-sub { margin-top: 4px; }
+  .a-big { min-height: 52px; padding: 0 22px; font-size: 17px; border-radius: 12px; }
+  .a-tools { display: flex; gap: 8px; flex-wrap: wrap; }
+  .a-tools .input { flex: 1 1 220px; min-height: 46px; font-size: 16px; }
+  .a-tools .btn { min-height: 46px; }
+  .a-section { display: grid; gap: 10px; }
+  .a-section-head { display: flex; align-items: baseline; justify-content: space-between; }
+  .a-section h2 { font-size: 13px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .a-card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; display: grid; gap: 12px; transition: box-shadow .2s; }
+  .a-card.is-new { box-shadow: 0 0 0 3px var(--accent-soft); }
+  .a-card.is-done { background: transparent; }
+  .a-row { display: flex; justify-content: space-between; gap: 14px; align-items: flex-start; }
+  .a-name { font-size: 20px; font-weight: 700; }
+  .a-meta { color: var(--muted); font-size: 14px; margin-top: 2px; }
+  .a-count { text-align: right; white-space: nowrap; }
+  .a-count .num { font-size: 26px; font-weight: 700; line-height: 1; }
+  .a-count small { display: block; color: var(--muted); font-size: 13px; margin-top: 3px; }
+  .a-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .a-actions .btn { min-height: 44px; }
+  .a-stepper { display: grid; gap: 8px; background: var(--subtle); border-radius: 10px; padding: 12px; }
+  .a-stepper-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .a-stepper .btn { min-height: 48px; min-width: 52px; font-size: 22px; }
+  .a-stepper .input { width: 84px; min-height: 48px; text-align: center; font-size: 22px; font-family: var(--font-figures); }
+  .a-stepper .a-all { font-size: 16px; }
+  .a-stepper .a-done { margin-left: auto; font-size: 15px; }
+  .a-empty { background: var(--card); border: 1px dashed var(--line); border-radius: 14px; padding: 36px 24px; text-align: center; display: grid; gap: 12px; justify-items: center; }
+  .a-empty h2 { font-size: 22px; }
+  .a-empty p { color: var(--muted); max-width: 40ch; }
+  details.a-collected summary { cursor: pointer; font-size: 13px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); padding: 6px 0; }
+  details.a-collected > ul { display: grid; gap: 10px; margin-top: 10px; }
+  .a-money { display: grid; gap: 14px; }
+  .a-money .a-expected { font-size: 34px; font-weight: 700; }
+  .a-money-rows { display: grid; gap: 6px; font-size: 15px; }
+  .a-money-rows div { display: flex; justify-content: space-between; gap: 12px; }
+  .a-bills { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+  .a-bills .input { text-align: right; font-family: var(--font-figures); }
+  .a-verdict { padding: 14px; border-radius: 10px; background: var(--subtle); display: grid; gap: 4px; }
+  .a-verdict strong { font-size: 18px; }
+  .a-verdict.ok { background: var(--accent-soft); color: var(--accent); }
+  .a-verdict.bad { background: var(--danger-soft); color: var(--danger); }
+  fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 6px; }
+  .a-radios { display: flex; gap: 8px; flex-wrap: wrap; }
+  .a-radios label { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; }
+  .a-radios label:has(input:checked) { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .a-radios input { accent-color: var(--accent); }
+  .a-list-plain { display: grid; gap: 6px; }
+  .a-list-plain li { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .a-list-plain li .btn { min-height: 32px; }
+  .a-skel { display: grid; gap: 10px; }
+  .a-skel .skeleton { height: 108px; border-radius: 14px; }
+  @media (max-width: 480px) { .a-count .num { font-size: 22px; } .a-name { font-size: 18px; } .a-tools .input { flex-basis: 100%; } .a-tools .btn { flex: 1; } }
+</style>
+
+<div class="a-app">
+  <header class="a-head">
+    <div>
+      <h1>Sales Tracker</h1>
+      <p class="a-sub muted" id="a-sub">Loading the ledger…</p>
+    </div>
+    <button class="btn btn-primary a-big" id="a-log" type="button">Log a sale</button>
+  </header>
+  <div class="a-tools">
+    <input class="input" id="a-search" type="search" aria-label="Find a purchaser or product" placeholder="Find someone…" autocomplete="off">
+    <button class="btn" id="a-money" type="button">Money</button>
+    <button class="btn" id="a-settings" type="button">Settings</button>
+  </div>
+  <main id="a-main" aria-live="polite" aria-busy="true"></main>
+</div>
+
+<dialog id="a-log-dlg" aria-labelledby="a-log-h">
+  <form class="dlg-body" id="a-log-form" novalidate>
+    <h2 id="a-log-h">Log a sale</h2>
+    <div class="field">
+      <label for="a-f-purchaser">Who bought?</label>
+      <input class="input" id="a-f-purchaser" list="a-purchasers" autocomplete="off" placeholder="Name as they gave it">
+      <datalist id="a-purchasers"></datalist>
+      <div class="field-error" id="a-e-purchaser"></div>
+    </div>
+    <div class="field">
+      <label for="a-f-product">What?</label>
+      <select class="select" id="a-f-product"></select>
+      <div class="field-error" id="a-e-product"></div>
+    </div>
+    <div class="field">
+      <label for="a-f-qty">How many?</label>
+      <input class="input num" id="a-f-qty" inputmode="decimal" placeholder="0" style="max-width:140px">
+      <div class="field-error" id="a-e-qty"></div>
+    </div>
+    <fieldset>
+      <legend class="legend">Paid by</legend>
+      <div class="a-radios">
+        <label><input type="radio" name="a-method" value="cash" checked> Cash</label>
+        <label><input type="radio" name="a-method" value="venmo"> Venmo</label>
+        <label><input type="radio" name="a-method" value="other"> Other</label>
+      </div>
+    </fieldset>
+    <div class="field-error" id="a-e-form" role="alert"></div>
+    <div class="dlg-actions">
+      <button class="btn" type="button" data-close>Cancel</button>
+      <button class="btn btn-primary" type="submit">Save sale</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="a-edit-dlg" aria-labelledby="a-edit-h">
+  <form class="dlg-body" id="a-edit-form" novalidate>
+    <h2 id="a-edit-h">Edit order</h2>
+    <p class="hint" id="a-edit-hint"></p>
+    <div class="field"><label for="a-ef-purchaser">Purchaser</label><input class="input" id="a-ef-purchaser"></div>
+    <div class="field"><label for="a-ef-product">Product</label><select class="select" id="a-ef-product"></select></div>
+    <div class="field"><label for="a-ef-qty">How many ordered</label><input class="input num" id="a-ef-qty" inputmode="decimal" style="max-width:140px"></div>
+    <div class="field"><label for="a-ef-method">Paid by</label><select class="select" id="a-ef-method"><option value="cash">Cash</option><option value="venmo">Venmo</option><option value="other">Other</option></select></div>
+    <div class="field-error" id="a-ef-error" role="alert"></div>
+    <div class="dlg-actions">
+      <button class="btn" type="button" data-close>Cancel</button>
+      <button class="btn btn-primary" type="submit">Save changes</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="a-money-dlg" aria-labelledby="a-money-h">
+  <div class="dlg-body a-money">
+    <h2 id="a-money-h">Money</h2>
+    <div>
+      <div class="eyebrow">Cash that should be in the drawer</div>
+      <div class="a-expected num" id="a-m-expected">$0.00</div>
+    </div>
+    <div class="a-money-rows" id="a-m-rows"></div>
+    <div>
+      <div class="eyebrow">Count your bills</div>
+      <p class="hint">Only cash is compared. Venmo and other payments never reach the drawer. Counts are not saved.</p>
+    </div>
+    <div class="a-bills" id="a-m-bills"></div>
+    <div class="a-verdict" id="a-m-verdict"><strong>Enter your bill counts to compare.</strong></div>
+    <div class="dlg-actions"><button class="btn" type="button" data-close>Close</button></div>
+  </div>
+</dialog>
+
+<dialog id="a-settings-dlg" aria-labelledby="a-set-h">
+  <div class="dlg-body">
+    <h2 id="a-set-h">Settings</h2>
+    <div>
+      <div class="eyebrow">Products</div>
+      <ul class="a-list-plain" id="a-set-products"></ul>
+    </div>
+    <form id="a-product-form" class="field" novalidate>
+      <label for="a-pf-name">Add a product</label>
+      <div style="display:grid;grid-template-columns:1fr 100px 110px;gap:8px">
+        <input class="input" id="a-pf-name" placeholder="Name" aria-label="Product name">
+        <input class="input" id="a-pf-unit" placeholder="Unit" aria-label="Unit, for example jar" list="a-units">
+        <input class="input num" id="a-pf-price" placeholder="Price" aria-label="Price per unit" inputmode="decimal">
+      </div>
+      <datalist id="a-units"></datalist>
+      <div class="field-error" id="a-pf-error" role="alert"></div>
+      <div><button class="btn" type="submit">Add product</button></div>
+    </form>
+    <div>
+      <div class="eyebrow">Removing records</div>
+      <p class="hint">Nothing on the main list can be deleted by accident. Type RESET to unlock the actions below. None can be undone.</p>
+      <input class="input" id="a-set-unlock" aria-label="Type RESET to unlock" placeholder="Type RESET" style="margin-top:8px">
+    </div>
+    <div class="field">
+      <label for="a-set-order">Delete one order</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><select class="select" id="a-set-order" style="flex:1"></select><button class="btn btn-danger" type="button" id="a-set-del-order">Delete order</button></div>
+    </div>
+    <div class="field">
+      <label for="a-set-product">Delete one product</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><select class="select" id="a-set-product" style="flex:1"></select><button class="btn btn-danger" type="button" id="a-set-del-product">Delete product</button></div>
+    </div>
+    <div class="dlg-actions" style="justify-content:flex-start">
+      <button class="btn btn-danger" type="button" id="a-set-reset-orders">Reset all orders</button>
+      <button class="btn btn-danger" type="button" id="a-set-reset-all">Reset everything</button>
+    </div>
+    <div class="field-error" id="a-set-error" role="alert"></div>
+    <div class="dlg-actions"><button class="btn" type="button" data-close>Close</button></div>
+  </div>
+</dialog>
+
+<div class="toast" id="a-toast" hidden role="status" aria-live="polite"></div>
+
+<script src="fixture.js"></script>
+<script src="explore.js"></script>
+<script>
+(function () {
+  "use strict";
+  var store = ST.createStore();
+  explore(store);
+  var $ = function (s, root) { return (root || document).querySelector(s); };
+  var $$ = function (s, root) { return Array.prototype.slice.call((root || document).querySelectorAll(s)); };
+  var esc = ST.esc, money = ST.money, qty = ST.qty;
+
+  var open = {};        // order id -> stepper open
+  var drafts = {};      // order id -> typed received value
+  var errors = {};      // order id -> message
+  var newest = null;    // highlight after logging
+  var loaded = false;
+  var toastTimer = null;
+
+  function toast(msg) {
+    var t = $("#a-toast");
+    t.textContent = msg; t.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.hidden = true; }, 4000);
+  }
+
+  function unitOf(o) { return o.unit === "each" ? "" : " " + o.unit; }
+
+  function card(o) {
+    var isOpen = !!open[o.id];
+    var draft = drafts[o.id] != null ? drafts[o.id] : qty(o.received);
+    var err = errors[o.id] || "";
+    var hint = o.fulfilled ? "All " + qty(o.ordered) + unitOf(o) + " handed over" :
+      qty(o.remaining) + unitOf(o) + " still to hand over";
+    return '<li class="a-card' + (o.fulfilled ? " is-done" : "") + (newest === o.id ? " is-new" : "") + '" data-id="' + o.id + '">' +
+      '<div class="a-row"><div><div class="a-name">' + esc(o.purchaser) + '</div>' +
+      '<div class="a-meta">' + esc(o.product) + ' · paid by ' + ST.cap(o.method) + ' · ' + ST.when(o.created) +
+      (o.fulfilled ? "" : ' · ' + money(o.uncollected) + ' still owed') + '</div></div>' +
+      '<div class="a-count"><span class="num">' + qty(o.received) + '<span class="muted"> / ' + qty(o.ordered) + '</span></span>' +
+      '<small>' + esc(hint) + '</small></div></div>' +
+      '<div class="bar" role="progressbar" aria-label="Handed over" aria-valuemin="0" aria-valuemax="' + o.ordered + '" aria-valuenow="' + o.received + '"><i style="width:' + Math.round(o.received / o.ordered * 100) + '%"></i></div>' +
+      (isOpen ?
+        '<div class="a-stepper" role="group" aria-label="Hand over to ' + esc(o.purchaser) + '">' +
+        '<div class="a-stepper-row">' +
+        '<button class="btn" type="button" data-act="minus" aria-label="One fewer"' + (o.received <= 0 ? " disabled" : "") + '>−</button>' +
+        '<input class="input" data-act="draft" aria-label="Received so far" inputmode="decimal" value="' + esc(draft) + '"' + (err ? ' aria-invalid="true"' : "") + '>' +
+        '<button class="btn" type="button" data-act="plus" aria-label="One more"' + (o.fulfilled ? " disabled" : "") + '>+</button>' +
+        '<button class="btn btn-primary a-all" type="button" data-act="all"' + (o.fulfilled ? " disabled" : "") + '>All ' + qty(o.ordered) + '</button>' +
+        '<button class="btn btn-quiet a-done" type="button" data-act="close">Done</button></div>' +
+        '<div class="field-error" role="alert">' + esc(err) + '</div></div>'
+      :
+        '<div class="a-actions">' +
+        (o.fulfilled ? '<button class="btn" type="button" data-act="open">Adjust</button>' :
+          '<button class="btn btn-primary" type="button" data-act="open">Hand over</button>') +
+        '<button class="btn btn-quiet" type="button" data-act="edit">Edit</button></div>') +
+      '</li>';
+  }
+
+  function render(focusSel) {
+    var main = $("#a-main");
+    var products = store.products();
+    var search = $("#a-search").value;
+    var s = store.summary();
+    var f = store.financials();
+    $("#a-sub").textContent = products.length ?
+      s.outstanding + " waiting · " + money(f.totalUncollected) + " still owed" : "Nothing to sell yet";
+    $("#a-log").disabled = !products.length;
+    main.setAttribute("aria-busy", "false");
+
+    if (!products.length) {
+      main.innerHTML = '<div class="a-empty"><h2>Set up what you sell</h2>' +
+        '<p>A product is whatever you hand out: a jar of honey, a candle, a pound of coffee. Once one exists you can log who bought it.</p>' +
+        '<button class="btn btn-primary a-big" type="button" id="a-first-product">Establish a product</button></div>';
+      $("#a-first-product").addEventListener("click", function () { openSettings(true); });
+      return;
+    }
+    var all = store.orders({ search: search });
+    var waiting = all.filter(function (o) { return !o.fulfilled; }).sort(function (a, b) { return a.created < b.created ? -1 : 1; });
+    var done = all.filter(function (o) { return o.fulfilled; });
+    var html = "";
+    if (!all.length) {
+      html = '<div class="a-empty">' + (search ?
+        '<h2>Nothing matches “' + esc(search) + '”</h2><p>Try a shorter name, or clear the search.</p>' :
+        '<h2>No one is waiting</h2><p>Log a sale and the person appears here until everything is handed over.</p>') + '</div>';
+    } else {
+      html += '<section class="a-section" aria-labelledby="a-waiting-h"><div class="a-section-head"><h2 id="a-waiting-h">Waiting · ' + waiting.length + '</h2><span class="hint">Oldest first</span></div>';
+      html += waiting.length ? '<ul style="display:grid;gap:10px">' + waiting.map(card).join("") + '</ul>' :
+        '<p class="hint" style="padding:12px 0">Everyone has collected. Nice.</p>';
+      html += '</section>';
+      if (done.length) {
+        html += '<details class="a-collected"' + (waiting.length ? "" : " open") + '><summary>Collected · ' + done.length + '</summary><ul>' + done.map(card).join("") + '</ul></details>';
+      }
+    }
+    main.innerHTML = html;
+    if (focusSel) { var el = $(focusSel); if (el) el.focus(); }
+  }
+
+  function showLoading() {
+    $("#a-main").innerHTML = '<div class="a-skel" aria-label="Loading"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>';
+  }
+
+  // Card actions
+  $("#a-main").addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-act]");
+    if (!btn) return;
+    var li = btn.closest("[data-id]");
+    var id = Number(li.dataset.id);
+    var act = btn.dataset.act;
+    var o = store.order(id);
+    var sel = '[data-id="' + id + '"] [data-act="' + act + '"]';
+    if (act === "open") { open[id] = true; errors[id] = ""; drafts[id] = null; render('[data-id="' + id + '"] [data-act="plus"]'); return; }
+    if (act === "close") { open[id] = false; errors[id] = ""; drafts[id] = null; render('[data-id="' + id + '"] [data-act="open"]'); return; }
+    if (act === "edit") { openEdit(o); return; }
+    var target = act === "plus" ? o.received + 1 : act === "minus" ? o.received - 1 : o.ordered;
+    if (act !== "all") target = Math.max(0, Math.min(o.ordered, target));
+    var r = store.attempt(function () { return store.setReceived(id, target); });
+    if (!r.ok) { errors[id] = r.error; render(sel); return; }
+    errors[id] = ""; drafts[id] = null;
+    if (r.value.fulfilled) { toast(r.value.purchaser + " — all " + qty(r.value.ordered) + " handed over"); }
+    render(r.value.fulfilled ? '[data-id="' + id + '"] [data-act="close"]' : sel);
+  });
+  $("#a-main").addEventListener("keydown", function (e) {
+    var input = e.target.closest('[data-act="draft"]');
+    if (!input || e.key !== "Enter") return;
+    e.preventDefault();
+    var id = Number(input.closest("[data-id]").dataset.id);
+    var r = store.attempt(function () { return store.setReceived(id, input.value); });
+    if (!r.ok) { errors[id] = r.error; drafts[id] = input.value; render('[data-id="' + id + '"] [data-act="draft"]'); return; }
+    errors[id] = ""; drafts[id] = null;
+    toast(r.value.purchaser + " — " + qty(r.value.received) + " of " + qty(r.value.ordered) + " recorded");
+    render('[data-id="' + id + '"] [data-act="draft"]');
+  });
+  $("#a-main").addEventListener("input", function (e) {
+    var input = e.target.closest('[data-act="draft"]');
+    if (input) drafts[Number(input.closest("[data-id]").dataset.id)] = input.value;
+  });
+  $("#a-search").addEventListener("input", function () { render(); });
+
+  // Dialog plumbing
+  function openDialog(dlg, focusSel) {
+    dlg.showModal();
+    var el = focusSel ? $(focusSel, dlg) : null;
+    if (el) el.focus();
+  }
+  $$("dialog").forEach(function (dlg) {
+    $$("[data-close]", dlg).forEach(function (b) { b.addEventListener("click", function () { dlg.close(); }); });
+  });
+  function fieldErrors(prefix, message) {
+    var target = "form";
+    if (/purchaser/i.test(message)) target = "purchaser";
+    else if (/quantity/i.test(message)) target = "qty";
+    else if (/product/i.test(message)) target = "product";
+    ["purchaser", "qty", "product", "form"].forEach(function (k) {
+      var el = $("#" + prefix + "-e-" + k); if (el) el.textContent = k === target ? message : "";
+      var input = $("#" + prefix + "-f-" + k); if (input) input.setAttribute("aria-invalid", k === target ? "true" : "false");
+    });
+    var focus = $("#" + prefix + "-f-" + target); if (focus) focus.focus();
+  }
+
+  // Log a sale
+  $("#a-log").addEventListener("click", function () {
+    var products = store.products();
+    $("#a-f-product").innerHTML = products.map(function (p) {
+      return '<option value="' + esc(p.name) + '">' + esc(p.name) + ' · ' + money(p.price) + ' per ' + esc(p.unit) + '</option>';
+    }).join("");
+    $("#a-purchasers").innerHTML = store.purchasers().map(function (n) { return '<option value="' + esc(n) + '">'; }).join("");
+    $("#a-f-purchaser").value = ""; $("#a-f-qty").value = "";
+    fieldErrors("a", "");
+    openDialog($("#a-log-dlg"), "#a-f-purchaser");
+  });
+  $("#a-log-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var method = ($("input[name=a-method]:checked") || {}).value;
+    var r = store.attempt(function () {
+      return store.addOrder({ purchaser: $("#a-f-purchaser").value, product: $("#a-f-product").value, qty: $("#a-f-qty").value, method: method });
+    });
+    if (!r.ok) { fieldErrors("a", r.error); return; }
+    $("#a-log-dlg").close();
+    newest = r.value.id;
+    $("#a-search").value = "";
+    toast("Logged " + r.value.purchaser + " — " + qty(r.value.ordered) + " " + r.value.unit + " of " + r.value.product);
+    render('[data-id="' + r.value.id + '"] [data-act="open"]');
+    setTimeout(function () { newest = null; var c = $('[data-id="' + r.value.id + '"]'); if (c) c.classList.remove("is-new"); }, 2500);
+  });
+
+  // Edit
+  var editing = null;
+  function openEdit(o) {
+    editing = o.id;
+    $("#a-edit-hint").textContent = qty(o.received) + " already received. Quantity cannot go below that; use Hand over to change it.";
+    $("#a-ef-purchaser").value = o.purchaser;
+    $("#a-ef-product").innerHTML = store.products().map(function (p) {
+      return '<option value="' + esc(p.name) + '"' + (p.id === o.productId ? " selected" : "") + '>' + esc(p.name) + '</option>';
+    }).join("");
+    $("#a-ef-qty").value = qty(o.ordered);
+    $("#a-ef-method").value = o.method;
+    $("#a-ef-error").textContent = "";
+    openDialog($("#a-edit-dlg"), "#a-ef-purchaser");
+  }
+  $("#a-edit-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var r = store.attempt(function () {
+      return store.editOrder(editing, { purchaser: $("#a-ef-purchaser").value, product: $("#a-ef-product").value, qty: $("#a-ef-qty").value, method: $("#a-ef-method").value });
+    });
+    if (!r.ok) { $("#a-ef-error").textContent = r.error; return; }
+    $("#a-edit-dlg").close();
+    toast("Updated " + r.value.purchaser + "’s order");
+    render('[data-id="' + r.value.id + '"] [data-act="edit"]');
+  });
+
+  // Money
+  function renderMoney() {
+    var f = store.financials();
+    $("#a-m-expected").textContent = money(f.cashCollected);
+    $("#a-m-rows").innerHTML = [
+      ["Cash still to collect", f.cashUncollected], ["Venmo / other collected", f.otherCollected],
+      ["Venmo / other still to collect", f.otherUncollected], ["Full order value", f.bookValue]
+    ].map(function (r) { return '<div><span class="muted">' + r[0] + '</span><span class="num">' + money(r[1]) + '</span></div>'; }).join("");
+    recount();
+  }
+  $("#a-m-bills").innerHTML = ST.DENOMINATIONS.map(function (d) {
+    return '<div class="field"><label for="a-bill-' + d + '">$' + d + ' bills</label><input class="input" id="a-bill-' + d + '" data-bill="' + d + '" inputmode="numeric" placeholder="0"></div>';
+  }).join("");
+  function recount() {
+    var counts = {};
+    $$("[data-bill]").forEach(function (i) { counts[i.dataset.bill] = i.value; });
+    var v = $("#a-m-verdict");
+    var any = Object.keys(counts).some(function (k) { return counts[k].trim() !== ""; });
+    if (!any) { v.className = "a-verdict"; v.innerHTML = "<strong>Enter your bill counts to compare.</strong>"; return; }
+    var r = store.attempt(function () { return store.reconcile(counts); });
+    if (!r.ok) { v.className = "a-verdict bad"; v.innerHTML = "<strong>" + esc(r.error) + "</strong>"; return; }
+    v.className = "a-verdict " + (r.value.balanced ? "ok" : "bad");
+    v.innerHTML = "<strong>" + esc(r.value.headline) + "</strong><span>Counted " + money(r.value.counted) + " against " + money(r.value.expected) + " expected.</span>" +
+      (r.value.note ? "<span>" + esc(r.value.note) + "</span>" : "");
+  }
+  $("#a-m-bills").addEventListener("input", recount);
+  $("#a-money").addEventListener("click", function () { renderMoney(); openDialog($("#a-money-dlg"), "#a-bill-100"); });
+
+  // Settings
+  function renderSettings() {
+    var products = store.products();
+    $("#a-set-products").innerHTML = products.length ? products.map(function (p) {
+      return '<li><span>' + esc(p.name) + ' <span class="muted">' + money(p.price) + ' per ' + esc(p.unit) + ' · ' + store.ordersFor(p.id) + ' order(s)</span></span></li>';
+    }).join("") : '<li class="muted">No products yet.</li>';
+    $("#a-units").innerHTML = ST.UNITS.map(function (u) { return '<option value="' + u + '">'; }).join("");
+    $("#a-set-order").innerHTML = store.orders().map(function (o) {
+      return '<option value="' + o.id + '">#' + o.id + ' ' + esc(o.purchaser) + ' · ' + esc(o.product) + ' ' + qty(o.received) + '/' + qty(o.ordered) + '</option>';
+    }).join("") || '<option value="">No orders</option>';
+    $("#a-set-product").innerHTML = products.map(function (p) {
+      return '<option value="' + p.id + '">' + esc(p.name) + '</option>';
+    }).join("") || '<option value="">No products</option>';
+  }
+  function openSettings(focusProduct) {
+    renderSettings();
+    $("#a-set-error").textContent = ""; $("#a-pf-error").textContent = "";
+    openDialog($("#a-settings-dlg"), focusProduct ? "#a-pf-name" : "#a-set-unlock");
+  }
+  $("#a-settings").addEventListener("click", function () { openSettings(false); });
+  $("#a-product-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var r = store.attempt(function () {
+      return store.addProduct({ name: $("#a-pf-name").value, unit: $("#a-pf-unit").value, price: $("#a-pf-price").value });
+    });
+    if (!r.ok) { $("#a-pf-error").textContent = r.error; $("#a-pf-name").focus(); return; }
+    $("#a-pf-name").value = ""; $("#a-pf-unit").value = ""; $("#a-pf-price").value = "";
+    $("#a-pf-error").textContent = "";
+    renderSettings(); render();
+    toast("Added " + r.value.name);
+  });
+  function unlocked() {
+    if ($("#a-set-unlock").value.trim() === "RESET") return true;
+    $("#a-set-error").textContent = "Type RESET in the unlock box first so this cannot happen by accident.";
+    $("#a-set-unlock").focus();
+    return false;
+  }
+  function settingsAction(fn, done) {
+    if (!unlocked()) return;
+    var r = store.attempt(fn);
+    if (!r.ok) { $("#a-set-error").textContent = r.error; return; }
+    $("#a-set-error").textContent = "";
+    renderSettings(); render(); toast(done(r.value));
+  }
+  $("#a-set-del-order").addEventListener("click", function () {
+    var id = $("#a-set-order").value; if (!id) return;
+    settingsAction(function () { return store.deleteOrder(id); }, function (o) { return "Deleted " + o.purchaser + "’s order for " + o.product; });
+  });
+  $("#a-set-del-product").addEventListener("click", function () {
+    var id = $("#a-set-product").value; if (!id) return;
+    settingsAction(function () { return store.deleteProduct(id); }, function (p) { return "Deleted " + p.name; });
+  });
+  $("#a-set-reset-orders").addEventListener("click", function () {
+    settingsAction(function () { return store.resetOrders(); }, function (n) { return "Cleared " + n + " order(s). Products are still on file."; });
+  });
+  $("#a-set-reset-all").addEventListener("click", function () {
+    settingsAction(function () { store.resetAll(); }, function () { return "Products and orders were cleared."; });
+  });
+
+  store.subscribe(function () { if (loaded) render(); });
+  ST.boot(showLoading, function () { loaded = true; render(); });
+})();
+</script>

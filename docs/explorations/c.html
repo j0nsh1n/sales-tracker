@@ -1,0 +1,389 @@
+<meta charset="utf-8">
+<title>Guide</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap">
+<link rel="stylesheet" href="shared.css">
+<style>
+  /* Direction C — Guide. Three tasks, each a short walk with one question per screen. */
+  :root { --radius: 12px; }
+  body { font-size: 16px; }
+  .c-app { max-width: 680px; margin: 0 auto; padding: 20px 16px 80px; display: grid; gap: 18px; }
+  .c-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .c-top h1 { font-size: 18px; font-weight: 800; }
+  .c-top .btn { min-height: 36px; }
+  .c-strip { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 18px; display: flex; gap: 18px; flex-wrap: wrap; }
+  .c-strip div { display: grid; }
+  .c-strip .num { font-size: 20px; font-weight: 700; }
+  .c-strip small { color: var(--muted); font-size: 12px; }
+  .c-tasks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .c-task { display: grid; gap: 8px; text-align: left; padding: 18px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--card); cursor: pointer; align-content: start; min-height: 150px; }
+  .c-task:hover:not(:disabled) { border-color: var(--accent); }
+  .c-task:disabled { cursor: not-allowed; opacity: 0.6; }
+  .c-task .c-ico { width: 38px; height: 38px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 800; font-size: 18px; }
+  .c-task strong { font-size: 17px; }
+  .c-task span { color: var(--muted); font-size: 14px; }
+  .c-task.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .c-task.primary .c-ico { background: rgba(255,255,255,0.2); color: inherit; }
+  .c-task.primary span { color: inherit; opacity: 0.85; }
+  .c-links { display: flex; gap: 14px; flex-wrap: wrap; }
+  .c-links button { all: unset; cursor: pointer; color: var(--accent); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+  .c-links button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
+  .c-panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; display: grid; gap: 16px; }
+  .c-progress { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+  .c-dots { display: flex; gap: 5px; }
+  .c-dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+  .c-dots i.on { background: var(--accent); }
+  .c-panel h2 { font-size: 24px; font-weight: 800; letter-spacing: -0.01em; }
+  .c-panel h2:focus { outline: none; }
+  .c-panel .lead { color: var(--muted); font-size: 15px; }
+  .c-big-input { min-height: 54px; font-size: 20px; }
+  .c-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .c-chip { min-height: 40px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); cursor: pointer; font-weight: 600; }
+  .c-chip:hover { background: var(--subtle); }
+  .c-chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .c-choices { display: grid; gap: 8px; }
+  .c-choice { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 14px 16px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); cursor: pointer; text-align: left; width: 100%; }
+  .c-choice:hover { background: var(--subtle); }
+  .c-choice[aria-checked="true"] { border-color: var(--accent); background: var(--accent-soft); }
+  .c-choice .c-radio { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center; }
+  .c-choice[aria-checked="true"] .c-radio { border-color: var(--accent); }
+  .c-choice[aria-checked="true"] .c-radio::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+  .c-choice strong { display: block; }
+  .c-choice small { color: var(--muted); }
+  .c-choice .num { font-weight: 700; }
+  .c-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--subtle); color: var(--muted); display: grid; place-items: center; font-weight: 700; font-size: 13px; }
+  .c-nav { display: flex; justify-content: space-between; gap: 8px; margin-top: 6px; }
+  .c-nav .btn { min-height: 46px; padding: 0 20px; }
+  .c-review { display: grid; gap: 8px; }
+  .c-review div { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .c-review div span:first-child { color: var(--muted); }
+  .c-done { text-align: center; display: grid; gap: 10px; justify-items: center; }
+  .c-done .c-check { width: 64px; height: 64px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-size: 30px; font-weight: 800; }
+  .c-done .big { font-size: 26px; font-weight: 800; }
+  .c-done .bar { width: 100%; max-width: 280px; height: 10px; }
+  .c-done.bad .c-check { background: var(--danger-soft); color: var(--danger); }
+  .c-list { display: grid; gap: 8px; }
+  .c-row { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 12px 14px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
+  .c-row .c-row-actions { display: flex; gap: 6px; }
+  .c-row .btn { min-height: 34px; padding: 0 10px; font-size: 13px; }
+  .c-row .bar { height: 5px; margin-top: 6px; }
+  .c-bills { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+  .c-bills .input { text-align: right; font-family: var(--font-figures); font-size: 18px; min-height: 48px; }
+  .c-empty { text-align: center; padding: 24px; color: var(--muted); }
+  .c-skel { display: grid; gap: 12px; }
+  .c-skel .skeleton { height: 150px; }
+  .c-search { min-height: 44px; }
+  @media (max-width: 640px) {
+    .c-tasks { grid-template-columns: 1fr; }
+    .c-task { min-height: 0; grid-template-columns: auto 1fr; grid-template-areas: "ico title" "ico desc"; }
+    .c-task .c-ico { grid-area: ico; }
+    .c-task strong { grid-area: title; }
+    .c-task span { grid-area: desc; }
+    .c-panel { padding: 18px; }
+    .c-panel h2 { font-size: 21px; }
+  }
+</style>
+
+<div class="c-app">
+  <header class="c-top">
+    <h1>Sales Tracker</h1>
+    <button class="btn btn-quiet" type="button" id="c-home-btn" hidden>Home</button>
+  </header>
+  <div id="c-view"></div>
+</div>
+<div class="toast" id="c-toast" hidden role="status" aria-live="polite"></div>
+
+<script src="fixture.js"></script>
+<script src="explore.js"></script>
+<script>
+(function () {
+  "use strict";
+  var store = ST.createStore();
+  explore(store);
+  var $ = function (s, root) { return (root || document).querySelector(s); };
+  var $$ = function (s, root) { return Array.prototype.slice.call((root || document).querySelectorAll(s)); };
+  var esc = ST.esc, money = ST.money, qty = ST.qty;
+  var view = $("#c-view");
+  var route = { name: "home" };   // {name, step, data}
+  var loaded = false;
+  var toastTimer;
+  function toast(msg) { var t = $("#c-toast"); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.hidden = true; }, 4000); }
+  function go(r) { route = r; render(); }
+  function unitWord(o, n) { return o.unit === "each" ? "" : " " + o.unit; }
+
+  function progress(step, total) {
+    var dots = ""; for (var i = 1; i <= total; i++) dots += '<i class="' + (i <= step ? "on" : "") + '"></i>';
+    return '<div class="c-progress"><span>Step ' + step + ' of ' + total + '</span><span class="c-dots" aria-hidden="true">' + dots + '</span></div>';
+  }
+  function nav(back, next, nextLabel, nextPrimary) {
+    return '<div class="c-nav">' + (back ? '<button class="btn" type="button" data-nav="back">Back</button>' : '<span></span>') +
+      (next ? '<button class="btn ' + (nextPrimary === false ? "" : "btn-primary") + '" type="button" data-nav="next">' + (nextLabel || "Next") + '</button>' : "") + '</div>';
+  }
+  function panel(inner) { return '<section class="c-panel" aria-live="polite">' + inner + '</section>'; }
+
+  // ---------------------------------------------------------------- home
+  function home() {
+    var products = store.products(), s = store.summary(), f = store.financials();
+    var waiting = s.outstanding;
+    var setup = !products.length;
+    return '<div class="c-strip" role="status">' +
+      '<div><span class="num">' + waiting + '</span><small>' + ST.plural(waiting, "person", "people") + ' waiting</small></div>' +
+      '<div><span class="num">' + money(f.totalUncollected) + '</span><small>still owed</small></div>' +
+      '<div><span class="num">' + money(f.cashCollected) + '</span><small>cash to have in the drawer</small></div></div>' +
+      '<div class="c-tasks">' +
+      (setup ?
+        '<button class="c-task primary" type="button" data-go="manage"><span class="c-ico" aria-hidden="true">1</span><strong>Set up your first product</strong><span>Name it, say how you count it, and give it a price. Then you can log sales.</span></button>' :
+        '<button class="c-task primary" type="button" data-go="log"><span class="c-ico" aria-hidden="true">+</span><strong>Log a sale</strong><span>Who bought, what, how many, and how they paid.</span></button>') +
+      '<button class="c-task" type="button" data-go="handover"' + (waiting ? "" : " disabled") + '><span class="c-ico" aria-hidden="true">✓</span><strong>Hand something over</strong><span>' + (waiting ? "Pick the person, say how many they took." : "No one is waiting right now.") + '</span></button>' +
+      '<button class="c-task" type="button" data-go="drawer"><span class="c-ico" aria-hidden="true">$</span><strong>Check the drawer</strong><span>Count your bills against what the ledger expects.</span></button>' +
+      '</div>' +
+      '<div class="c-links"><button type="button" data-go="list">See the full list (' + s.count + ')</button><button type="button" data-go="manage">Products and settings</button></div>';
+  }
+
+  // ---------------------------------------------------------------- list
+  function list() {
+    var d = route.data || (route.data = { status: "all", search: "" });
+    var rows = store.orders({ status: d.status, search: d.search });
+    return panel('<h2 tabindex="-1">Everyone on the list</h2>' +
+      '<div class="c-chips" role="group" aria-label="Show">' + [["all", "All"], ["outstanding", "Waiting"], ["received", "Collected"]].map(function (c) {
+        return '<button class="c-chip" type="button" data-status="' + c[0] + '" aria-pressed="' + (d.status === c[0]) + '">' + c[1] + '</button>';
+      }).join("") + '</div>' +
+      '<input class="input c-search" type="search" id="c-list-search" aria-label="Find a purchaser or product" placeholder="Find a name" value="' + esc(d.search) + '">' +
+      (rows.length ? '<ul class="c-list">' + rows.map(function (o) {
+        return '<li class="c-row"><span class="c-avatar" aria-hidden="true">' + ST.initials(o.purchaser) + '</span><div><strong>' + esc(o.purchaser) + '</strong> <span class="muted">· ' + esc(o.product) + ' · ' + ST.cap(o.method) + '</span>' +
+          '<div class="muted" style="font-size:13px">' + qty(o.received) + ' of ' + qty(o.ordered) + unitWord(o) + (o.fulfilled ? " · all collected" : " · " + money(o.uncollected) + " owed") + '</div>' +
+          '<div class="bar" aria-hidden="true"><i style="width:' + Math.round(o.received / o.ordered * 100) + '%"></i></div></div>' +
+          '<div class="c-row-actions">' + (o.fulfilled ? "" : '<button class="btn btn-primary" type="button" data-handover="' + o.id + '">Hand over</button>') + '<button class="btn" type="button" data-edit="' + o.id + '">Edit</button></div></li>';
+      }).join("") + '</ul>' : '<p class="c-empty">' + (d.search || d.status !== "all" ? "Nothing matches. Try another name or show everyone." : "No orders yet. Log a sale from the home screen.") + '</p>') +
+      nav(true, false));
+  }
+
+  // ---------------------------------------------------------------- log a sale flow
+  function log() {
+    var d = route.data || (route.data = { step: 1, purchaser: "", product: "", qty: "", method: "cash", error: "" });
+    var products = store.products();
+    var total = 5;
+    var err = d.error ? '<p class="field-error" role="alert">' + esc(d.error) + '</p>' : "";
+    if (d.step === 1) {
+      var recent = store.purchasers().slice(0, 6);
+      return panel(progress(1, total) + '<h2 tabindex="-1">Who bought?</h2><p class="lead">Their name as they gave it. Pick a previous purchaser or type a new one.</p>' +
+        '<label class="sr-only" for="c-who">Purchaser name</label><input class="input c-big-input" id="c-who" value="' + esc(d.purchaser) + '" autocomplete="off" placeholder="Name">' +
+        (recent.length ? '<div class="c-chips" aria-label="Previous purchasers">' + recent.map(function (n) { return '<button class="c-chip" type="button" data-pick-name="' + esc(n) + '">' + esc(n) + '</button>'; }).join("") + '</div>' : "") +
+        err + nav(true, true));
+    }
+    if (d.step === 2) {
+      return panel(progress(2, total) + '<h2 tabindex="-1">What did ' + esc(d.purchaser) + ' buy?</h2>' +
+        '<div class="c-choices" role="radiogroup" aria-label="Product">' + products.map(function (p) {
+          return '<button class="c-choice" type="button" role="radio" aria-checked="' + (d.product === p.name) + '" data-pick-product="' + esc(p.name) + '"><span class="c-radio" aria-hidden="true"></span><span><strong>' + esc(p.name) + '</strong><small>' + money(p.price) + ' per ' + esc(p.unit) + (p.notes ? ' · ' + esc(p.notes) : "") + '</small></span><span></span></button>';
+        }).join("") + '</div>' + err + nav(true, true));
+    }
+    if (d.step === 3) {
+      var p = store.findProduct(d.product);
+      return panel(progress(3, total) + '<h2 tabindex="-1">How many ' + esc(p.unit === "each" ? "" : p.unit + " of ") + esc(p.name) + '?</h2>' +
+        '<div class="c-chips" aria-label="Quick amounts">' + [1, 2, 3, 4, 5, 6, 10, 12].map(function (n) { return '<button class="c-chip" type="button" data-pick-qty="' + n + '" aria-pressed="' + (String(n) === d.qty) + '">' + n + '</button>'; }).join("") + '</div>' +
+        '<label class="sr-only" for="c-qty">Quantity</label><input class="input c-big-input num" id="c-qty" inputmode="decimal" placeholder="Or type a number" value="' + esc(d.qty) + '" style="max-width:220px">' +
+        err + nav(true, true));
+    }
+    if (d.step === 4) {
+      return panel(progress(4, total) + '<h2 tabindex="-1">How did ' + esc(d.purchaser) + ' pay?</h2><p class="lead">Only cash counts toward the drawer check.</p>' +
+        '<div class="c-choices" role="radiogroup" aria-label="Paid by">' + [["cash", "Cash", "Goes in the drawer"], ["venmo", "Venmo", "Settled on the phone"], ["other", "Other", "Card, cheque, IOU"]].map(function (m) {
+          return '<button class="c-choice" type="button" role="radio" aria-checked="' + (d.method === m[0]) + '" data-pick-method="' + m[0] + '"><span class="c-radio" aria-hidden="true"></span><span><strong>' + m[1] + '</strong><small>' + m[2] + '</small></span><span></span></button>';
+        }).join("") + '</div>' + nav(true, true));
+    }
+    if (d.step === 5) {
+      var pr = store.findProduct(d.product);
+      var q = Number(d.qty);
+      return panel(progress(5, total) + '<h2 tabindex="-1">Save this sale?</h2>' +
+        '<div class="c-review"><div><span>Purchaser</span><strong>' + esc(d.purchaser) + '</strong></div><div><span>Product</span><strong>' + esc(pr.name) + '</strong></div><div><span>How many</span><strong>' + qty(q) + ' ' + esc(pr.unit) + '</strong></div><div><span>Paid by</span><strong>' + ST.cap(d.method) + '</strong></div><div><span>Value</span><strong class="num">' + money(q * pr.price) + '</strong></div></div>' +
+        '<p class="lead">Received starts at 0. ' + esc(d.purchaser) + ' stays on the list until everything is handed over.</p>' + err + nav(true, true, "Save sale"));
+    }
+    if (d.step === 6) {
+      var o = d.saved;
+      return panel('<div class="c-done"><div class="c-check" aria-hidden="true">✓</div><div class="big">Logged</div><p class="lead">' + esc(o.purchaser) + ' — ' + qty(o.ordered) + ' ' + esc(o.unit) + ' of ' + esc(o.product) + ', paid by ' + ST.cap(o.method) + '.</p>' +
+        '<div class="c-nav" style="justify-content:center"><button class="btn btn-primary" type="button" data-go="log">Log another</button><button class="btn" type="button" data-go="home">Home</button></div></div>');
+    }
+  }
+  function logNext() {
+    var d = route.data; d.error = "";
+    if (d.step === 1) { d.purchaser = $("#c-who").value.trim(); if (!d.purchaser) { d.error = "purchaser name is required."; render("#c-who"); return; } }
+    if (d.step === 2 && !d.product) { d.error = "Choose which product this order is for."; render(); return; }
+    if (d.step === 3) { d.qty = $("#c-qty").value.trim() || d.qty; var r = store.attempt(function () { return ST.parseQuantity(d.qty); }); if (!r.ok) { d.error = r.error; render("#c-qty"); return; } d.qty = String(r.value); }
+    if (d.step === 5) {
+      var res = store.attempt(function () { return store.addOrder({ purchaser: d.purchaser, product: d.product, qty: d.qty, method: d.method }); });
+      if (!res.ok) { d.error = res.error; render(); return; }
+      d.saved = res.value;
+    }
+    d.step++; render();
+  }
+
+  // ---------------------------------------------------------------- hand over flow
+  function handover() {
+    var d = route.data || (route.data = { step: 1, orderId: null, amount: "", search: "", error: "" });
+    var err = d.error ? '<p class="field-error" role="alert">' + esc(d.error) + '</p>' : "";
+    if (d.step === 1) {
+      var waiting = store.orders({ status: "outstanding", search: d.search });
+      return panel(progress(1, 3) + '<h2 tabindex="-1">Who is collecting?</h2>' +
+        '<input class="input c-search" type="search" id="c-ho-search" aria-label="Find a purchaser" placeholder="Find a name" value="' + esc(d.search) + '">' +
+        (waiting.length ? '<div class="c-choices" role="radiogroup" aria-label="Purchaser">' + waiting.map(function (o) {
+          return '<button class="c-choice" type="button" role="radio" aria-checked="' + (d.orderId === o.id) + '" data-pick-order="' + o.id + '"><span class="c-avatar" aria-hidden="true">' + ST.initials(o.purchaser) + '</span><span><strong>' + esc(o.purchaser) + '</strong><small>' + esc(o.product) + ' · ' + qty(o.received) + ' of ' + qty(o.ordered) + unitWord(o) + ' so far</small></span><span class="num">' + qty(o.remaining) + ' left</span></button>';
+        }).join("") + '</div>' : '<p class="c-empty">' + (d.search ? "Nobody waiting matches that name." : "No one is waiting.") + '</p>') + err + nav(true, true));
+    }
+    var o = store.order(d.orderId);
+    if (d.step === 2) {
+      var chips = []; for (var n = 1; n <= Math.min(8, o.remaining); n++) chips.push(n);
+      return panel(progress(2, 3) + '<h2 tabindex="-1">How many did ' + esc(o.purchaser) + ' take today?</h2><p class="lead">' + esc(o.product) + ': ' + qty(o.received) + ' of ' + qty(o.ordered) + unitWord(o) + ' handed over so far, ' + qty(o.remaining) + ' to go.</p>' +
+        '<div class="c-chips" aria-label="Quick amounts">' + chips.map(function (n) { return '<button class="c-chip" type="button" data-pick-amount="' + n + '" aria-pressed="' + (String(n) === d.amount) + '">' + n + '</button>'; }).join("") +
+        '<button class="c-chip" type="button" data-pick-amount="' + qty(o.remaining) + '" aria-pressed="' + (qty(o.remaining) === d.amount) + '">All ' + qty(o.remaining) + '</button></div>' +
+        '<label class="sr-only" for="c-ho-amount">Amount handed over today</label><input class="input c-big-input num" id="c-ho-amount" inputmode="decimal" placeholder="Or type a number" value="' + esc(d.amount) + '" style="max-width:220px">' +
+        err + nav(true, true, "Record it"));
+    }
+    if (d.step === 3) {
+      var u = d.saved;
+      return panel('<div class="c-done"><div class="c-check" aria-hidden="true">✓</div><div class="big">' + esc(u.purchaser) + ' now has ' + qty(u.received) + ' of ' + qty(u.ordered) + '</div>' +
+        '<div class="bar"><i style="width:' + Math.round(u.received / u.ordered * 100) + '%"></i></div>' +
+        '<p class="lead">' + (u.fulfilled ? "That is everything. The row stays on the list marked received." : qty(u.remaining) + unitWord(u) + " of " + esc(u.product) + " still to hand over, " + money(u.uncollected) + " still owed.") + '</p>' +
+        '<div class="c-nav" style="justify-content:center"><button class="btn btn-primary" type="button" data-go="handover">Hand over to someone else</button><button class="btn" type="button" data-go="home">Home</button></div></div>');
+    }
+  }
+  function handoverNext() {
+    var d = route.data; d.error = "";
+    if (d.step === 1) { if (d.orderId == null) { d.error = "Pick who is collecting."; render(); return; } }
+    if (d.step === 2) {
+      var o = store.order(d.orderId);
+      var typed = $("#c-ho-amount").value.trim(); if (typed) d.amount = typed;
+      if (!d.amount) { d.error = "Say how many they took, or pick a number."; render("#c-ho-amount"); return; }
+      var add = Number(d.amount);
+      if (!isFinite(add) || add <= 0) { d.error = "quantity must be greater than zero."; render("#c-ho-amount"); return; }
+      var r = store.attempt(function () { return store.setReceived(o.id, o.received + add); });
+      if (!r.ok) { d.error = r.error.replace("received cannot be more than", "That would be more than the " + qty(o.ordered) + " ordered. Handed over so far plus today cannot exceed"); render("#c-ho-amount"); return; }
+      d.saved = r.value;
+    }
+    d.step++; render();
+  }
+
+  // ---------------------------------------------------------------- drawer flow
+  function drawer() {
+    var d = route.data || (route.data = { step: 1, counts: {}, error: "" });
+    var f = store.financials();
+    if (d.step === 1) {
+      return panel(progress(1, 2) + '<h2 tabindex="-1">Count the bills in the drawer</h2><p class="lead">Count first, then compare. The ledger expects ' + money(f.cashCollected) + ' in cash. Counts are not saved.</p>' +
+        '<div class="c-bills">' + ST.DENOMINATIONS.map(function (den) {
+          return '<div class="field"><label for="c-bill-' + den + '">$' + den + ' bills</label><input class="input" id="c-bill-' + den + '" data-bill="' + den + '" inputmode="numeric" placeholder="0" value="' + esc(d.counts[den] || "") + '"></div>';
+        }).join("") + '</div>' + (d.error ? '<p class="field-error" role="alert">' + esc(d.error) + '</p>' : "") + nav(true, true, "Compare"));
+    }
+    var r = d.result;
+    return panel('<div class="c-done' + (r.balanced ? "" : " bad") + '"><div class="c-check" aria-hidden="true">' + (r.balanced ? "✓" : "!") + '</div><div class="big">' + esc(r.headline.split(" — ")[0]) + '</div><p class="lead">' + esc(r.headline.split(" — ")[1] || "") + '</p>' +
+      '<div class="c-review" style="width:100%;max-width:320px;text-align:left"><div><span>You counted</span><strong class="num">' + money(r.counted) + '</strong></div><div><span>Ledger expects</span><strong class="num">' + money(r.expected) + '</strong></div><div><span>Difference</span><strong class="num">' + (r.diff > 0 ? "+" : "") + money(r.diff) + '</strong></div></div>' +
+      (r.note ? '<p class="lead">' + esc(r.note) + '</p>' : "") +
+      '<div class="c-nav" style="justify-content:center"><button class="btn" type="button" data-nav="back">Count again</button><button class="btn btn-primary" type="button" data-go="home">Home</button></div></div>');
+  }
+  function drawerNext() {
+    var d = route.data; d.error = "";
+    $$("[data-bill]").forEach(function (i) { d.counts[i.dataset.bill] = i.value; });
+    var r = store.attempt(function () { return store.reconcile(d.counts); });
+    if (!r.ok) { d.error = r.error; render(); return; }
+    d.result = r.value; d.step = 2; render();
+  }
+
+  // ---------------------------------------------------------------- edit
+  function edit() {
+    var d = route.data;
+    var o = store.order(d.orderId);
+    var products = store.products();
+    return panel('<h2 tabindex="-1">Edit ' + esc(o.purchaser) + '’s order</h2><p class="lead">' + qty(o.received) + ' already handed over. The quantity cannot go below that.</p>' +
+      '<div class="field"><label for="c-e-purchaser">Purchaser</label><input class="input" id="c-e-purchaser" value="' + esc(o.purchaser) + '"></div>' +
+      '<div class="field"><label for="c-e-product">Product</label><select class="select" id="c-e-product">' + products.map(function (p) { return '<option value="' + esc(p.name) + '"' + (p.id === o.productId ? " selected" : "") + '>' + esc(p.name) + '</option>'; }).join("") + '</select></div>' +
+      '<div class="field"><label for="c-e-qty">How many ordered</label><input class="input num" id="c-e-qty" inputmode="decimal" value="' + qty(o.ordered) + '" style="max-width:160px"></div>' +
+      '<div class="field"><label for="c-e-method">Paid by</label><select class="select" id="c-e-method">' + ST.METHODS.map(function (m) { return '<option value="' + m + '"' + (m === o.method ? " selected" : "") + '>' + ST.cap(m) + '</option>'; }).join("") + '</select></div>' +
+      (d.error ? '<p class="field-error" role="alert">' + esc(d.error) + '</p>' : "") + nav(true, true, "Save changes"));
+  }
+  function editNext() {
+    var d = route.data; d.error = "";
+    var r = store.attempt(function () { return store.editOrder(d.orderId, { purchaser: $("#c-e-purchaser").value, product: $("#c-e-product").value, qty: $("#c-e-qty").value, method: $("#c-e-method").value }); });
+    if (!r.ok) { d.error = r.error; render(); return; }
+    toast("Updated " + r.value.purchaser + "’s order");
+    go({ name: "list" });
+  }
+
+  // ---------------------------------------------------------------- manage
+  function manage() {
+    var d = route.data || (route.data = { error: "", perror: "" });
+    var products = store.products();
+    return panel('<h2 tabindex="-1">Products and settings</h2>' +
+      '<div><div class="eyebrow">Products</div>' + (products.length ? '<ul class="c-list" style="margin-top:8px">' + products.map(function (p) {
+        return '<li class="c-row" style="grid-template-columns:1fr auto"><div><strong>' + esc(p.name) + '</strong><div class="muted" style="font-size:13px">' + money(p.price) + ' per ' + esc(p.unit) + ' · ' + store.ordersFor(p.id) + ' order(s)</div></div><span></span></li>';
+      }).join("") + '</ul>' : '<p class="c-empty">No products yet.</p>') + '</div>' +
+      '<form id="c-product-form" class="field" novalidate><label for="c-pf-name">Add a product</label>' +
+      '<div style="display:grid;grid-template-columns:1fr 100px 110px;gap:8px"><input class="input" id="c-pf-name" placeholder="Name" aria-label="Product name"><input class="input" id="c-pf-unit" placeholder="Unit" aria-label="Unit" list="c-units"><input class="input num" id="c-pf-price" placeholder="Price" aria-label="Price per unit" inputmode="decimal"></div>' +
+      '<datalist id="c-units">' + ST.UNITS.map(function (u) { return '<option value="' + u + '">'; }).join("") + '</datalist>' +
+      (d.perror ? '<p class="field-error" role="alert">' + esc(d.perror) + '</p>' : "") + '<div><button class="btn btn-primary" type="submit">Add product</button></div></form>' +
+      '<div><div class="eyebrow">Removing records</div><p class="hint">Nothing on the list can be deleted by accident. Type RESET to unlock. None of this can be undone.</p>' +
+      '<input class="input" id="c-unlock" aria-label="Type RESET to unlock" placeholder="Type RESET" style="margin-top:8px"></div>' +
+      '<div class="field"><label for="c-del-order">Delete one order</label><div style="display:flex;gap:8px;flex-wrap:wrap"><select class="select" id="c-del-order" style="flex:1">' + (store.orders().map(function (o) { return '<option value="' + o.id + '">#' + o.id + ' ' + esc(o.purchaser) + ' · ' + esc(o.product) + '</option>'; }).join("") || '<option value="">No orders</option>') + '</select><button class="btn btn-danger" type="button" data-gated="order">Delete order</button></div></div>' +
+      '<div class="field"><label for="c-del-product">Delete one product</label><div style="display:flex;gap:8px;flex-wrap:wrap"><select class="select" id="c-del-product" style="flex:1">' + (products.map(function (p) { return '<option value="' + p.id + '">' + esc(p.name) + '</option>'; }).join("") || '<option value="">No products</option>') + '</select><button class="btn btn-danger" type="button" data-gated="product">Delete product</button></div></div>' +
+      '<div class="c-chips"><button class="btn btn-danger" type="button" data-gated="orders">Reset all orders</button><button class="btn btn-danger" type="button" data-gated="all">Reset everything</button></div>' +
+      (d.error ? '<p class="field-error" role="alert">' + esc(d.error) + '</p>' : "") + nav(true, false));
+  }
+
+  // ---------------------------------------------------------------- render + events
+  var VIEWS = { home: home, list: list, log: log, handover: handover, drawer: drawer, edit: edit, manage: manage };
+  function render(focusSel) {
+    view.innerHTML = VIEWS[route.name]();
+    $("#c-home-btn").hidden = route.name === "home";
+    var el = focusSel ? $(focusSel) : $("h2[tabindex]", view);
+    if (el) el.focus();
+    if (route.name === "manage") $("#c-product-form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var r = store.attempt(function () { return store.addProduct({ name: $("#c-pf-name").value, unit: $("#c-pf-unit").value, price: $("#c-pf-price").value }); });
+      if (!r.ok) { route.data.perror = r.error; render("#c-pf-name"); return; }
+      route.data.perror = ""; toast("Added " + r.value.name); render("#c-pf-name");
+    });
+  }
+  function showLoading() { view.innerHTML = '<div class="c-skel" aria-label="Loading"><div class="skeleton" style="height:70px"></div><div class="skeleton"></div></div>'; }
+
+  view.addEventListener("click", function (e) {
+    var t = e.target.closest("button"); if (!t) return;
+    var d = route.data;
+    if (t.dataset.go) { go({ name: t.dataset.go }); return; }
+    if (t.dataset.nav === "back") {
+      if (route.name === "home" || !d || !d.step || d.step === 1) { go({ name: "home" }); return; }
+      d.error = ""; d.step--; render(); return;
+    }
+    if (t.dataset.nav === "next") {
+      ({ log: logNext, handover: handoverNext, drawer: drawerNext, edit: editNext })[route.name]();
+      return;
+    }
+    if (t.dataset.status) { d.status = t.dataset.status; render(); return; }
+    if (t.dataset.handover) { go({ name: "handover", data: { step: 2, orderId: Number(t.dataset.handover), amount: "", search: "", error: "" } }); return; }
+    if (t.dataset.edit) { go({ name: "edit", data: { orderId: Number(t.dataset.edit), error: "" } }); return; }
+    if (t.dataset.pickName) { d.purchaser = t.dataset.pickName; d.error = ""; d.step = 2; render(); return; }
+    if (t.dataset.pickProduct) { d.product = t.dataset.pickProduct; d.error = ""; d.step = 3; render(); return; }
+    if (t.dataset.pickQty) { d.qty = t.dataset.pickQty; d.error = ""; d.step = 4; render(); return; }
+    if (t.dataset.pickMethod) { d.method = t.dataset.pickMethod; d.step = 5; render(); return; }
+    if (t.dataset.pickOrder) { d.orderId = Number(t.dataset.pickOrder); d.error = ""; d.step = 2; render(); return; }
+    if (t.dataset.pickAmount) { d.amount = t.dataset.pickAmount; $("#c-ho-amount").value = ""; handoverNext(); return; }
+    if (t.dataset.gated) {
+      if ($("#c-unlock").value.trim() !== "RESET") { d.error = "Type RESET in the unlock box first so this cannot happen by accident."; render("#c-unlock"); return; }
+      var kind = t.dataset.gated, r;
+      if (kind === "order") { var oid = $("#c-del-order").value; if (!oid) return; r = store.attempt(function () { return store.deleteOrder(oid); }); }
+      else if (kind === "product") { var pid = $("#c-del-product").value; if (!pid) return; r = store.attempt(function () { return store.deleteProduct(pid); }); }
+      else if (kind === "orders") r = store.attempt(function () { return store.resetOrders(); });
+      else r = store.attempt(function () { store.resetAll(); return "Products and orders were cleared."; });
+      if (!r.ok) { d.error = r.error; render(); return; }
+      d.error = ""; toast(typeof r.value === "string" ? r.value : typeof r.value === "number" ? "Cleared " + r.value + " order(s)." : "Deleted " + (r.value.purchaser ? r.value.purchaser + "’s order" : r.value.name));
+      render();
+    }
+  });
+  view.addEventListener("input", function (e) {
+    if (e.target.id === "c-list-search") { route.data.search = e.target.value; render("#c-list-search"); $("#c-list-search").setSelectionRange(e.target.value.length, e.target.value.length); }
+    if (e.target.id === "c-ho-search") { route.data.search = e.target.value; render("#c-ho-search"); $("#c-ho-search").setSelectionRange(e.target.value.length, e.target.value.length); }
+  });
+  view.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" || e.target.tagName !== "INPUT" || e.target.type === "search") return;
+    var next = $('[data-nav="next"]'); if (next && !e.target.closest("form")) { e.preventDefault(); next.click(); }
+  });
+  $("#c-home-btn").addEventListener("click", function () { go({ name: "home" }); });
+
+  store.subscribe(function () { if (loaded && route.name === "home") render(); });
+  ST.boot(showLoading, function () { loaded = true; render(); });
+})();
+</script>

@@ -6,7 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-24
+
+### Changed
+- The desktop window is redesigned around a sidebar with five pages.
+  Counter is the working page: the orders still waiting are cards, oldest
+  first, each with a Hand over button that unfolds −1 / +1 / All controls
+  around the received box; collected orders fold away underneath; Log a
+  sale opens a dialog. Details is the full grid with every column,
+  sortable by heading, with status and product filters, a one-line
+  command line for logging (`purchaser, quantity, product, paid by`) with
+  a live preview, the received figure typed in place on the row, and
+  keyboard shortcuts (+ − a e n /). Buyers is new: every order grouped by
+  purchaser with what they still owe. Products is new: a card per product
+  with its sales and an Edit button. Money is now a page rather than a
+  dialog, with the drawer verdict shown large and the difference in
+  dollars.
+- Ctrl+1 to Ctrl+5 switch pages, Ctrl+F jumps to search, Ctrl+S opens Log
+  a sale.
+
+### Fixed
+- In dark mode the arrow on the product wizard's editable unit box stayed
+  light grey.
+- The footer, which carries confirmations such as "Logged Jim…", was
+  pushed off the bottom of shorter windows.
+
 ### Added
+- The packaged build updates itself. It checks for a newer release once a
+  day and says so in the status bar; Settings → Updates has Check now,
+  Install and restart, and Restore previous version. The CLI has `update`
+  and `update --install --yes`. Releases come from GitHub by default; a
+  private repository takes a token, and the source can instead be any web
+  address or a folder, so an update can be handed over on a USB stick.
+  Downloads are installed only if their size and SHA-256 match the
+  release's `update.json`, which CI now attaches to every release.
+- Orders and products can be edited after they are saved. Edit order and
+  Edit product sit beside the list filters, in the Ledger menu, and Ctrl+E
+  edits the selected order. An order's purchaser, quantity, product, and
+  payment method can be corrected; the GUI previously had no way to change
+  a payment method at all. A product's name, unit, price, SKU, and notes can
+  be corrected. Quantity cannot drop below what has been received. A price
+  change that reprices existing orders, collected money included, asks
+  first. CLI: `edit order <id>` and `edit product <id>` (price changes on a
+  product with orders need `--yes`), and item 8 in the interactive menu.
 - Project governance set: `agents.md`, `spec.md`, `roadmap.md`, `context.md`,
   `CHANGELOG.md`, short `README.md`, and `.gitignore`.
 - Product setup wizard (GUI and interactive CLI) before orders can be logged.

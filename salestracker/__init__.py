@@ -1,5 +1,7 @@
 """Sales Tracker package."""
 
+from salestracker._version import __version__
+
 from salestracker.cli import InteractiveSession, build_parser, collect_product_answers, main
 from salestracker.finance import (
     DENOMINATIONS,
@@ -30,6 +32,7 @@ from salestracker.models import (
 from salestracker.store import SCHEMA_VERSION, SalesTracker
 
 __all__ = [
+    "__version__",
     "CASH",
     "DENOMINATIONS",
     "DEFAULT_DB",

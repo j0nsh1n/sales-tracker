@@ -403,6 +403,121 @@ class SalesTracker:
         self._conn.commit()
         return self.get_order(order_id)
 
+    def edit_order(
+        self,
+        order_id: int,
+        *,
+        purchaser: str | None = None,
+        quantity: object = None,
+        product: str | int | None = None,
+        payment_method: str | None = None,
+    ) -> Order:
+        """Correct an order after it was logged. None leaves a field as it is.
+
+        Received is never touched here: a smaller order is refused rather than
+        quietly rewriting what has already been handed over.
+        """
+        order = self.get_order(order_id)
+        buyer = order.purchaser if purchaser is None else purchaser.strip()
+        if not buyer:
+            raise TrackerError("purchaser name is required.")
+        ordered = (
+            order.quantity_ordered if quantity is None else parse_quantity(quantity)
+        )
+        if ordered < order.quantity_received:
+            raise TrackerError(
+                f"quantity cannot be less than the "
+                f"{format_qty(order.quantity_received)} already received."
+            )
+        product_id = (
+            order.product_id if product is None else self.find_product(product).id
+        )
+        method = (
+            order.payment_method
+            if payment_method is None
+            else parse_payment_method(payment_method)
+        )
+        self._conn.execute(
+            """
+            UPDATE orders
+            SET purchaser = ?, quantity_ordered = ?, product_id = ?,
+                payment_method = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (buyer, str(ordered), product_id, method, _now(), order_id),
+        )
+        self._conn.commit()
+        return self.get_order(order_id)
+
+    def edit_product(
+        self,
+        product_id: int,
+        *,
+        name: str | None = None,
+        unit: str | None = None,
+        unit_price: object = None,
+        sku: str | None = None,
+        notes: str | None = None,
+    ) -> Product:
+        """Correct a product. None leaves a field as it is.
+
+        Price lives on the product, so a new price reprices every order for it,
+        collected money included. Callers warn about that before calling.
+        """
+        current = self.get_product(product_id)
+        payload = self._validated_product(
+            name=current.name if name is None else name,
+            unit=current.unit if unit is None else unit,
+            unit_price=current.unit_price if unit_price is None else unit_price,
+            sku=current.sku if sku is None else sku,
+            notes=current.notes if notes is None else notes,
+        )
+        clash = self._conn.execute(
+            "SELECT id FROM products WHERE name = ? COLLATE NOCASE AND id != ?",
+            (payload["name"], product_id),
+        ).fetchone()
+        if clash:
+            raise TrackerError(
+                f"A product named {payload['name']!r} is already on file."
+            )
+        self._conn.execute(
+            """
+            UPDATE products
+            SET name = ?, unit = ?, unit_price = ?, sku = ?, notes = ?
+            WHERE id = ?
+            """,
+            (
+                payload["name"],
+                payload["unit"],
+                str(payload["unit_price"]),
+                payload["sku"],
+                payload["notes"],
+                product_id,
+            ),
+        )
+        self._conn.commit()
+        return self.get_product(product_id)
+
+    def price_change_warning(self, product_id: int, new_price: object) -> str:
+        """Why a price change needs confirming, or "" when it does not.
+
+        Orders carry no price of their own, so a new price rewrites what every
+        existing order is worth -- money already collected included -- and the
+        drawer check stops matching what was really taken.
+        """
+        if new_price is None:
+            return ""
+        product = self.get_product(product_id)
+        if parse_money(new_price, field="price") == product.unit_price:
+            return ""
+        attached = self.count_orders_for_product(product_id)
+        if not attached:
+            return ""
+        return (
+            f"The new price also applies to the {attached} order(s) already "
+            f"logged for {product.name}, including money already collected."
+        )
+
     def financials(self) -> Financials:
         """Expected money, split by whether it should be in the drawer."""
         cash_in = cash_out = other_in = other_out = Decimal("0.00")

@@ -31,6 +31,16 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
   Received must be ≥ 0 and ≤ ordered. Marking the name received (received
   ≥ ordered) does **not** remove the row. Filter the list: all /
   outstanding / received. Search by purchaser or product name.
+- **Edit:** a logged order's purchaser, quantity ordered, product, and
+  payment method can be corrected. Quantity ordered cannot drop below what
+  has already been received; received itself is changed only through the
+  received-so-far box. A product's name, unit, price, SKU, and notes can be
+  corrected, and duplicate names are still rejected. Price lives on the
+  product, so a new price reprices every order for it, money already
+  collected included: when orders exist, the operator is told so and must
+  confirm (GUI: a yes/no prompt; CLI: `--yes`, or answering yes in the
+  interactive session). Editing never removes a row. A rejected edit writes
+  nothing.
 - **Orders never disappear from the main list.** There is no per-order
   delete control on the order list in the GUI or CLI. Removing a row is a
   Settings-level action only (see below).
@@ -63,6 +73,21 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
 - **Payment methods are stored lowercase** (`cash`, `venmo`, `other`) and
   capitalized only for display. The CSV column and the words the CLI
   accepts are the stored form, so `order --method venmo` keeps working.
+- **Updates:** the packaged build can find and install a newer release.
+  A release publishes an `update.json` manifest beside its binaries
+  (version, date, notes, and each build's name, size and SHA-256). The
+  app reads it from an *update source*: `github:owner/repo` (default,
+  through the release-download redirect so no API rate limit applies; a
+  private repository needs a token), any HTTPS address, or a local or
+  shared folder. A packaged build checks quietly at most once a day and
+  reports a newer version in the status bar; Settings has Check now,
+  Install and restart, and Restore previous version; the CLI has
+  `update`, `update --install --yes`, and `--source`. A download is
+  installed only if its size and SHA-256 match the manifest. Installing
+  renames the running binary to `.old` and puts the new one in its place,
+  then restarts; the `.old` copy is kept for the restore. Nothing from
+  the ledger is sent anywhere. From a source checkout, installing is
+  refused.
 - **Empty states** when there are no products or no orders. Invalid input
   fails closed: no partial row is written.
 - **Money:** optional. Stored as `decimal.Decimal` quantized to 0.01,
@@ -78,12 +103,29 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
   - Desktop: `python3 gui.py`
   - Script: `python3 sales_tracker.py` (interactive menu) or subcommands
     (`product`, `order`, `receive`, `list`, `summary`, `money`, `export`,
-    `pay`, `delete`, `reset`, …)
-- GUI: product wizard on first run if the catalog is empty; order ticket
-  (purchaser + quantity); list with received/ordered; a separate
-  received-so-far box for the selected row; Settings in the Ledger menu
-  and header. Settings holds the Appearance choice, and the order and
-  product delete pickers behind a typed `RESET` unlock.
+    `pay`, `edit`, `update`, `delete`, `reset`, …)
+- GUI: a sidebar switches between five pages — Counter, Details, Buyers,
+  Products, and Money — and carries New product, Export CSV, Settings, and
+  the Appearance toggle. Product wizard on first run if the catalog is
+  empty, with a welcome card in place of the queue until a product exists.
+  Counter is the working page: a Log a sale button opening a dialog
+  (purchaser, product, quantity, payment method); a search box; the
+  waiting orders as cards, oldest first, each with its received/ordered
+  figures and a Hand over button that unfolds the received-so-far box
+  with −1, +1 and All controls; received orders folded under Collected.
+  Details is the dense grid: every column (#, purchaser, product, ordered,
+  received, left, owed, status, paid by, logged), sortable by heading,
+  with All / Outstanding / Received filters, a product filter and search;
+  a command line that logs a sale from one line (`purchaser, quantity,
+  product, paid by`) with a live preview; the received figure typed in
+  place on the row (Enter or double-click); + / − hand over one; a All,
+  e Edit, n and / jump to the log line and search; All received, Edit
+  order and a Paid by picker under the grid, with a status line. Buyers
+  groups orders by purchaser with what each still owes. Products shows
+  each product as a card with its sales and an Edit button. Money is the
+  money page described above. Edit product is also in the Ledger menu;
+  Ctrl+E edits the selected order. Settings holds the Appearance choice,
+  and the order and product delete pickers behind a typed `RESET` unlock.
 - CLI interactive session asks one question at a time for product setup,
   logging, and received-so-far updates.
 - Example: establish Honey (jar, $12.50) → log Jim bought 10 → enter 5 in
@@ -112,7 +154,8 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
 - Major components:
   - `sales_tracker.py` — `SalesTracker`, product/order schema, interactive
     CLI and flag CLI
-  - `gui.py` — Tkinter ledger (product wizard, list, received box, Settings)
+  - `gui.py` — Tkinter ledger (sidebar pages, order list and inspector,
+    product wizard, Settings)
   - `salestracker/ui/theme.py` — light/dark palettes and OS theme detection
   - `test_sales_tracker.py` — unittest (library, CLI, interactive session,
     GUI smoke)
@@ -129,15 +172,26 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
     quantity_received, created_at, updated_at, payment_method
   - **Setting:** key, value — operator preferences, not ledger data. Not
     touched by either reset; "reset everything" means products and orders.
+    Holds the theme and the update source, token, last check and cached
+    manifest.
 - If a legacy `sales` table is present, migrate it into products + orders
   (received starts at 0) and drop `sales`.
 - Schema version lives in `PRAGMA user_version` and is currently **3**:
   v1 products + orders, v2 `orders.payment_method`, v3 the `settings`
   table. A database newer than the code is refused rather than opened.
-- External APIs/services: **none**. No Stripe, Shopify, email, or LLM.
+- External APIs/services: **none** for the ledger. The updater is the one
+  exception: it fetches `update.json` and a binary from the configured
+  update source (GitHub Releases by default), only when asked or once a
+  day from a packaged build, and sends nothing but the request. The
+  version number is `salestracker/_version.py`; CI refuses a `v*` tag
+  that does not match it, and attaches `update.json` to the release.
 
 ## Security & Privacy
-- No secrets in source. No accounts, no network auth.
+- No secrets in source. No accounts. The only network credential is the
+  optional update token for a private repository, typed by the operator
+  and kept in the local `settings` table (or the
+  `SALES_TRACKER_UPDATE_TOKEN` environment variable), never in source,
+  never forwarded to the storage host GitHub redirects downloads to.
 - Purchaser names and product data stay on the machine. Do not log extra
   copies of purchaser names.
 - This app never stores card numbers, bank accounts, or payment tokens.
@@ -182,6 +236,11 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
 - [x] Settings is the only place any record can be removed
 - [x] CLI and GUI share one SQLite ledger
 - [x] Every order records how it is paid; existing ledgers default to cash
+- [x] An order's purchaser, quantity, product, and payment method, and a
+      product's name, unit, price, SKU, and notes, can be corrected from the
+      GUI and the CLI; quantity cannot drop below received
+- [x] A price change that would reprice existing orders requires an
+      explicit confirmation
 - [x] Expected money is split into cash and non-cash, collected and not
 - [x] A bill count is compared against cash collected only, and reports
       balanced / over / short
@@ -194,6 +253,9 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
 - [x] Every dialog opens over the main window, and any dialog whose
       content is taller than its window can be scrolled to the end
 - [x] A packaged build opens a real window (`tools/smoke_test.py`)
+- [x] A packaged build can find a newer release from GitHub, a web
+      address or a folder, installs it only when the size and SHA-256
+      match, keeps the previous build, and can restore it
 - [x] `python3 -m unittest test_sales_tracker.py` exits 0
 - [ ] CHANGELOG.md updated for later user-visible releases
 

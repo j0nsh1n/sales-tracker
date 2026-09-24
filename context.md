@@ -5,17 +5,18 @@
 - App is a **SQLite ledger** with two entry points: interactive CLI
   (`sales_tracker.py`) and Tkinter UI (`gui.py`). Implementation lives in
   the `salestracker` package; root files are shims.
-- Tests: `python3 -m unittest test_sales_tracker.py` — 86 tests, green on
-  Windows and Linux. Packaged build: `python3 tools/smoke_test.py`.
+- Tests: `python3 -m unittest test_sales_tracker.py` — 149 tests, green on
+  Linux (cloud container, 3.14 via `uv python install 3.14`, GUI under
+  `xvfb-run`). Packaged build: `python3 tools/smoke_test.py`.
   Lint / types: **not configured**.
 - Frozen GUI: built by CI; `v*` tags attach Windows exe and Linux ELF to
   a GitHub Release. Binaries are not tracked in git.
-- Git: `j0nsh1n/sales-tracker` (private). On `main`, at v0.1.5.
+- Git: `j0nsh1n/sales-tracker` (private). Branch is cut for v0.2.0.
 
 ## Repo Landmarks
 | Path | Role |
 |------|------|
-| `salestracker/` | models, store, cli, `ui/gui.py` |
+| `salestracker/` | models, store, cli, `update.py` (self-update protocol), `_version.py`, `ui/gui.py` |
 | `sales_tracker.py` | Thin CLI shim |
 | `gui.py` | Thin GUI shim |
 | `test_sales_tracker.py` | unittest for library, CLI, interactive session, GUI |
@@ -23,6 +24,7 @@
 | `release/` | gitignored (local binaries and `sales.db`; not tracked) |
 | `salestracker/ui/theme.py` | Light/dark palettes and OS theme detection |
 | `tools/smoke_test.py` | Launches a frozen build, requires a real window |
+| `docs/explorations/` | Four clickable HTML design directions (A–D) on one shared fixture; not product code |
 | `requirements-build.txt` | Build-only pin: pyinstaller==6.22.2 |
 | `.github/workflows/ci.yml` | Tests, then Windows + Linux package; Releases on `v*` |
 | `agents.md` | Global coding rules |
@@ -45,6 +47,8 @@ Product 1---* Order
   ledger data and not cleared by either reset
 - Line total is computed: ordered × unit_price
 - Fulfilled when received >= ordered; the row stays
+- Editing: `edit_order()` / `edit_product()` change only the fields passed.
+  Received is not editable there, and ordered cannot go below received.
 - Deleting happens only in Settings: `delete_order()`, `delete_product()`
   (refused while orders reference the product), `reset_orders()`,
   `reset_all()`. The main list still has no delete control.
@@ -59,9 +63,25 @@ Product 1---* Order
   orders. Legacy `sales` import is migration 0 → 1 (received starts at 0).
   Newer-than-code databases raise TrackerError.
 - GUI auto-opens the product wizard when the catalog is empty. The
-  "Establish a product" button belongs to that empty state and disappears
-  with it, so the header carries its own New product button; without one
-  a second product needed Ctrl+N or the menu.
+  "Establish a product" button belongs to the welcome card and disappears
+  with it, so the sidebar carries its own New product button.
+- GUI layout (2026-09-24 redesign): sidebar + five pages (`show_page`).
+  Counter (design direction A) is the working page: cards rebuilt by
+  `_render_counter` on every refresh, one card's stepper open at a time
+  (`_open_card`). Details (direction B) holds the grid, the command line
+  (`_parse_cmd` / `run_cmd`) and an in-place received editor placed over
+  the cell. `selected_order_id` is the one source of "the order being
+  worked on" for both pages; `_on_select` ignores selection changes made
+  during `refresh`. Log a sale is a dialog whose fields are the app's own
+  variables, so `log_order` works with or without it open. Money is a
+  page (`MoneyPanel`), not a dialog. Plain Tk widgets register
+  their palette names with `SalesApp.paint()` and `_repaint` reapplies
+  them after the generic canvas pass, which would otherwise leave page
+  canvases in the dialog colour. Entry hints are `Placeholder` overlays,
+  so the variables never hold hint text. A Treeview cuts off columns it
+  cannot fit instead of shrinking them, so `_fit_columns` shares the width
+  on every resize. The Buyers grid keeps its own headings; the Details
+  grid uses `HEADINGS`.
 - Settings reset requires typing RESET so it cannot be a stray click.
 - PyInstaller is build-only, not a runtime dependency. The pin is 6.22.2
   because 6.21.0 collects no Tcl/Tk data against Python 3.14 (Tcl/Tk 9
@@ -96,6 +116,21 @@ Product 1---* Order
   Tk 8.6's own bindings round sub-notch deltas to zero, which is why a
   touchpad moved nothing on Linux even in the order list. The list
   bindings return "break" so Tk's class binding cannot also fire.
+- Price is read from the product at query time; orders store none. Editing
+  a price therefore reprices every order for it, collected money included,
+  which moves the Money page's cash-collected figure. Both UIs confirm first
+  via `price_change_warning()`; the store itself does not refuse.
+- Updates: `update.json` beside each release is the protocol; sources are
+  `github:owner/repo`, a URL, or a folder (`resolve_source`). The GitHub
+  default reads the `releases/latest/download/` redirect, not the API, so
+  unauthenticated checks are not rate-limited; a private repo needs a
+  token and goes through the API, where asset downloads redirect to a
+  storage host that rejects the token (`_NoTokenAcrossHosts` strips it).
+  Install is a rename of the running binary to `.old` plus a rename of
+  the download, which Windows and Linux both allow; the Windows path is
+  reasoned about, not run here. CI attaches `update.json` in a
+  `release-manifest` job and refuses a `v*` tag that differs from
+  `_version.py`.
 - Payment methods are capitalised for display only. The ledger, the CSV,
   and the CLI's accepted input all stay lowercase.
 - Linux frozen binary was built natively here; Windows exe was Wine + CI.
@@ -112,16 +147,28 @@ Product 1---* Order
   headless runners.
 
 ## Session Handoff
-- **Date:** 2026-09-16
-- **Branch:** `main` (PR #7 merged, tagged v0.1.5)
-- **Done:** added a New product button to the header, released as 0.1.5.
-  Adding a second product previously needed Ctrl+N or the Ledger menu:
-  the only button for it belongs to the empty state and is swapped out
-  once a product exists.
-- **Verified:** 86 tests green locally and on the PR's CI (tests,
-  windows-exe, linux-elf). Checked by screenshot, and by removing the
-  button again to confirm the new tests fail with the reported symptom.
-- **Open:** the Wine path of the smoke test is still unrun. Coins not
-  handled. Extra payment methods (zelle/card) need a spec line. History
-  still holds 30 MB of old binaries. `docs/design/` remains untracked.
-- **Next:** nothing outstanding; 0.1.5 is the current release.
+- **Date:** 2026-09-24
+- **Branch:** `claude/loving-sagan-cstbui` (from `main` at v0.1.5)
+- **Done:** (1) edit orders and products. (2) Sidebar redesign. (3) Four
+  UI directions prototyped in `docs/explorations/`; the human chose A
+  (Counter) as the main page with B (Register) as a Details page, now
+  implemented. (4) Self-update protocol (`salestracker/update.py`):
+  manifest, three source kinds, ETag cache, daily quiet check, verified
+  download, rename-swap install with restore; Settings → Updates, CLI
+  `update`, CI manifest job and tag/version check. spec.md gained an
+  Updates bullet and exceptions to "no external services" and "no network
+  auth", at the human's request this session.
+- **Verified:** 149 tests green under xvfb on 3.14 (uv); Counter and
+  Details checked by screenshot in light and dark at 1260x800 and at the
+  minimum 1180x700, including the card and cell error states. Linux
+  onefile rebuilt and `tools/smoke_test.py` passed.
+- **Open:** the updater's Windows rename path and the real GitHub path
+  are untested here (no Windows, and no release carries `update.json`
+  yet; the first tagged release after this merge will). Downloads are
+  read into memory, fine at ~17 MB. Price is not snapshotted per order.
+  Buyers page kept although neither chosen direction had it. Windows exe
+  not rebuilt locally; CI builds it. Coins, zelle/card, history binaries
+  as before.
+- **Next:** `_version.py` is 0.2.0 and CHANGELOG is cut. Merge the PR,
+  then tag `v0.2.0` on main: CI checks the tag against the version and
+  attaches the binaries and `update.json` to the release.

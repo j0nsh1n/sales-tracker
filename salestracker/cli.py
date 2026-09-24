@@ -21,8 +21,10 @@ from salestracker.models import (
     format_payment_method,
     format_qty,
 )
+from salestracker._version import __version__
 from salestracker.finance import DENOMINATIONS, count_cash, reconcile
 from salestracker.store import SalesTracker
+from salestracker.update import Updater, target_path
 
 PromptFn = Callable[[str], str]
 WriteFn = Callable[[str], None]
@@ -148,6 +150,15 @@ def collect_cash_count(ask: PromptFn, write: WriteFn) -> dict[int, str]:
     return counts
 
 
+def _describe_order(order: Order) -> str:
+    return (
+        f"{order.purchaser}, {format_qty(order.quantity_received)} / "
+        f"{format_qty(order.quantity_ordered)} {order.product_unit} of "
+        f"{order.product_name}, paid by "
+        f"{format_payment_method(order.payment_method)}"
+    )
+
+
 class InteractiveSession:
     """Menu-driven CLI used when the script is run with no subcommand."""
 
@@ -204,6 +215,7 @@ class InteractiveSession:
         self.write("  5) Money (expected totals and a cash count)\n")
         self.write("  6) Export the list to CSV\n")
         self.write("  7) Settings (reset)\n")
+        self.write("  8) Fix a mistake (edit an order or product)\n")
         self.write("  0) Quit\n")
         return self.ask("> ").strip().casefold()
 
@@ -223,6 +235,8 @@ class InteractiveSession:
             self._export()
         elif choice in {"7", "settings"}:
             self._settings()
+        elif choice in {"8", "edit", "fix"}:
+            self._edit()
         else:
             self.write("Choose a number from the menu, or 0 to quit.\n")
 
@@ -295,6 +309,90 @@ class InteractiveSession:
             f"{format_qty(updated.quantity_received)} / "
             f"{format_qty(updated.quantity_ordered)}"
             f"  ({updated.status}).\n"
+        )
+
+    def _keep(self, label: str, current: str, *, clearable: bool = False) -> str | None:
+        """Ask for a new value; None when the operator keeps the current one.
+
+        Enter already means "keep", so an optional field is cleared with "-".
+        """
+        hint = "Enter keeps it, - clears it" if clearable else "Enter keeps it"
+        answer = self.ask(f"{label} [{current}] ({hint})\n> ")
+        if not answer.strip():
+            return None
+        if clearable and answer.strip() == "-":
+            return ""
+        return answer
+
+    def _edit(self) -> None:
+        choice = self.ask(
+            "Edit an order or a product? (o / p, Enter to go back)\n> "
+        ).strip().casefold()
+        if choice in {"o", "order"}:
+            self._edit_order()
+        elif choice in {"p", "product"}:
+            self._edit_product()
+        else:
+            self.write("Back.\n")
+
+    def _edit_order(self) -> None:
+        orders = self.tracker.list_orders()
+        if not orders:
+            self.write("No orders to edit.\n")
+            return
+        _print_orders(orders, self.write)
+        raw_id = self.ask("Edit which order number?\n> ").strip()
+        try:
+            order = self.tracker.get_order(int(raw_id))
+        except ValueError as exc:
+            raise TrackerError("Order number must be a whole number.") from exc
+        purchaser = self._keep("Purchaser", order.purchaser)
+        product: str | None = None
+        if len(self.tracker.list_products()) > 1:
+            product = self._keep("Product (name or number)", order.product_name)
+        quantity = self._keep(
+            f"How many {order.product_unit} ordered",
+            format_qty(order.quantity_ordered),
+        )
+        method = self._keep(
+            "Paid by (" + " / ".join(PAYMENT_METHODS) + ")", order.payment_method
+        )
+        updated = self.tracker.edit_order(
+            order.id,
+            purchaser=purchaser,
+            quantity=quantity,
+            product=product,
+            payment_method=method,
+        )
+        self.write(f"Updated #{updated.id}: {_describe_order(updated)}.\n")
+
+    def _edit_product(self) -> None:
+        products = self.tracker.list_products()
+        if not products:
+            self.write("No products to edit.\n")
+            return
+        _print_products(products, self.write)
+        product = self.tracker.find_product(
+            self.ask("Edit which product? (name or number)\n> ")
+        )
+        name = self._keep("Name", product.name)
+        unit = self._keep("Counted as", product.unit)
+        price = self._keep("Price per unit", str(product.unit_price))
+        sku = self._keep("SKU", product.sku or "none", clearable=True)
+        notes = self._keep("Notes", product.notes or "none", clearable=True)
+        warning = self.tracker.price_change_warning(product.id, price)
+        if warning:
+            self.write(warning + "\n")
+            confirm = self.ask("Change the price anyway? (yes / no)\n> ")
+            if confirm.strip().casefold() not in {"y", "yes"}:
+                self.write("Edit cancelled. Nothing was changed.\n")
+                return
+        updated = self.tracker.edit_product(
+            product.id, name=name, unit=unit, unit_price=price, sku=sku, notes=notes
+        )
+        self.write(
+            f"Updated: {updated.name} — {format_money(updated.unit_price)} / "
+            f"{updated.unit}.\n"
         )
 
     def _delete_order(self) -> None:
@@ -457,6 +555,30 @@ def build_parser() -> argparse.ArgumentParser:
     delete.add_argument("id", type=int)
     delete.add_argument("--yes", action="store_true", help="Confirm the delete")
 
+    edit = sub.add_parser(
+        "edit", help="Correct an order or a product (only the flags you pass change)"
+    )
+    edit_kind = edit.add_subparsers(dest="kind", required=True)
+    edit_order = edit_kind.add_parser("order", help="Correct an order")
+    edit_order.add_argument("id", type=int)
+    edit_order.add_argument("--buyer", help="Purchaser name")
+    edit_order.add_argument(
+        "--qty", help="Quantity ordered (not less than already received)"
+    )
+    edit_order.add_argument("--product", help="Product name or id")
+    edit_order.add_argument("--method", choices=PAYMENT_METHODS)
+    edit_product = edit_kind.add_parser("product", help="Correct a product")
+    edit_product.add_argument("id", type=int)
+    edit_product.add_argument("--name")
+    edit_product.add_argument("--unit")
+    edit_product.add_argument("--price")
+    edit_product.add_argument("--sku")
+    edit_product.add_argument("--notes")
+    edit_product.add_argument(
+        "--yes", action="store_true",
+        help="Confirm a price change that reprices existing orders",
+    )
+
     pay = sub.add_parser("pay", help="Change how an existing order is paid")
     pay.add_argument("id", type=int)
     pay.add_argument("method", choices=PAYMENT_METHODS)
@@ -476,6 +598,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     export = sub.add_parser("export", help="Write every order plus totals to CSV")
     export.add_argument("--out", required=True, help="Path of the CSV to write")
+
+    update = sub.add_parser(
+        "update", help="Check for a newer packaged build, or install it"
+    )
+    update.add_argument(
+        "--source",
+        help="Where releases are published: github:owner/repo, a URL, or a "
+             "folder. Remembered for next time.",
+    )
+    update.add_argument("--install", action="store_true", help="Install a newer build")
+    update.add_argument("--yes", action="store_true", help="Confirm the install")
 
     sub.add_parser("interactive", help="Menu-driven session")
     return parser
@@ -546,6 +679,43 @@ def main(argv: list[str] | None = None) -> int:
                 )
             elif args.command == "summary":
                 _print_summary(tracker.summary())
+            elif args.command == "edit" and args.kind == "order":
+                changes = {
+                    "purchaser": args.buyer,
+                    "quantity": args.qty,
+                    "product": args.product,
+                    "payment_method": args.method,
+                }
+                if all(value is None for value in changes.values()):
+                    raise TrackerError(
+                        "Nothing to change: pass --buyer, --qty, --product "
+                        "or --method."
+                    )
+                order = tracker.edit_order(args.id, **changes)
+                print(f"Updated order #{order.id}: {_describe_order(order)}")
+            elif args.command == "edit":
+                changes = {
+                    "name": args.name,
+                    "unit": args.unit,
+                    "unit_price": args.price,
+                    "sku": args.sku,
+                    "notes": args.notes,
+                }
+                if all(value is None for value in changes.values()):
+                    raise TrackerError(
+                        "Nothing to change: pass --name, --unit, --price, "
+                        "--sku or --notes."
+                    )
+                warning = tracker.price_change_warning(args.id, args.price)
+                if warning and not args.yes:
+                    raise TrackerError(
+                        f"{warning} Pass --yes to change it anyway."
+                    )
+                product = tracker.edit_product(args.id, **changes)
+                print(
+                    f"Updated product #{product.id}: {product.name} "
+                    f"({format_money(product.unit_price)} / {product.unit})"
+                )
             elif args.command == "pay":
                 order = tracker.set_payment_method(args.id, args.method)
                 print(
@@ -587,6 +757,32 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     product = tracker.delete_product(args.id)
                     print(f"Deleted product #{product.id} ({product.name}).")
+            elif args.command == "update":
+                updater = Updater(__version__, tracker.get_setting, tracker.set_setting)
+                if args.source:
+                    updater.set_source(args.source)
+                release = updater.check()
+                print(f"You have {__version__}. Latest at {updater.source_text}: "
+                      f"{release.version}"
+                      + (f" ({release.published})" if release.published else "") + ".")
+                if not updater.available(release):
+                    print("Up to date.")
+                elif not args.install:
+                    print(f"Version {release.version} is available. "
+                          "Run `update --install --yes` to install it.")
+                else:
+                    if not args.yes:
+                        raise TrackerError("Install refused: pass --yes to confirm.")
+                    target = target_path()
+                    if target is None:
+                        raise TrackerError(
+                            "Updates install into the packaged build only. From a "
+                            "source checkout, pull the repository instead."
+                        )
+                    fresh = updater.download(release, target.parent)
+                    updater.install(fresh, target)
+                    print(f"Installed {release.version} at {target}. Start it again to "
+                          f"use it; the previous build is kept as {target.name}.old.")
             elif args.command == "reset":
                 if not args.yes:
                     raise TrackerError("Reset refused: pass --yes to confirm.")
