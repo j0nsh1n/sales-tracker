@@ -422,6 +422,104 @@ class SalesTrackerTests(unittest.TestCase):
         self.assertEqual(changed.payment_method, "venmo")
         self.assertFalse(changed.is_cash)
 
+    def test_edit_order_changes_only_what_is_passed(self) -> None:
+        self._product()
+        order = self.tracker.add_order(purchaser="Jim", quantity="10")
+        self.tracker.set_received(order.id, "4")
+        edited = self.tracker.edit_order(order.id, purchaser="  Jimmy ")
+        self.assertEqual(edited.purchaser, "Jimmy")
+        self.assertEqual(edited.quantity_ordered, Decimal("10"))
+        self.assertEqual(edited.quantity_received, Decimal("4"))
+        self.assertEqual(edited.payment_method, CASH)
+        edited = self.tracker.edit_order(
+            order.id, quantity="12", payment_method="Venmo"
+        )
+        self.assertEqual(edited.purchaser, "Jimmy")
+        self.assertEqual(edited.quantity_ordered, Decimal("12"))
+        self.assertEqual(edited.quantity_received, Decimal("4"))
+        self.assertEqual(edited.payment_method, "venmo")
+
+    def test_edit_order_cannot_drop_below_received(self) -> None:
+        self._product()
+        order = self.tracker.add_order(purchaser="Jim", quantity="10")
+        self.tracker.set_received(order.id, "5")
+        with self.assertRaisesRegex(TrackerError, "5 already received"):
+            self.tracker.edit_order(order.id, purchaser="Ann", quantity="4")
+        # Fails closed: the purchaser in the same call was not written either.
+        unchanged = self.tracker.get_order(order.id)
+        self.assertEqual(unchanged.purchaser, "Jim")
+        self.assertEqual(unchanged.quantity_ordered, Decimal("10"))
+        # Down to exactly what was received is allowed and completes the order.
+        self.assertTrue(self.tracker.edit_order(order.id, quantity="5").fulfilled)
+
+    def test_edit_order_rejects_bad_input(self) -> None:
+        self._product()
+        order = self.tracker.add_order(purchaser="Jim", quantity="10")
+        for kwargs in (
+            {"purchaser": "   "},
+            {"quantity": "0"},
+            {"quantity": "nan"},
+            {"product": "Nope"},
+            {"payment_method": "bitcoin"},
+        ):
+            with self.subTest(**kwargs), self.assertRaises(TrackerError):
+                self.tracker.edit_order(order.id, **kwargs)
+        self.assertEqual(self.tracker.get_order(order.id), order)
+        with self.assertRaises(TrackerError):
+            self.tracker.edit_order(999, purchaser="Ann")
+
+    def test_edit_order_can_move_to_another_product(self) -> None:
+        self._product()
+        self._product("Jam", unit_price="4.00")
+        order = self.tracker.add_order(purchaser="Jim", quantity="2", product="Honey")
+        moved = self.tracker.edit_order(order.id, product="Jam")
+        self.assertEqual(moved.product_name, "Jam")
+        self.assertEqual(moved.total, Decimal("8.00"))
+
+    def test_edit_product_changes_only_what_is_passed(self) -> None:
+        product = self._product(sku="H-1", notes="raw")
+        edited = self.tracker.edit_product(product.id, unit="Box", sku="")
+        self.assertEqual(edited.name, "Honey")
+        self.assertEqual(edited.unit, "box")
+        self.assertEqual(edited.unit_price, Decimal("12.50"))
+        self.assertEqual(edited.sku, "")
+        self.assertEqual(edited.notes, "raw")
+        self.assertEqual(edited.created_at, product.created_at)
+
+    def test_edit_product_name_rules(self) -> None:
+        honey = self._product()
+        self._product("Jam")
+        with self.assertRaisesRegex(TrackerError, "already on file"):
+            self.tracker.edit_product(honey.id, name="JAM")
+        with self.assertRaises(TrackerError):
+            self.tracker.edit_product(honey.id, name="  ")
+        with self.assertRaises(TrackerError):
+            self.tracker.edit_product(honey.id, unit_price="-1")
+        self.assertEqual(self.tracker.get_product(honey.id), honey)
+        # Changing only the case of its own name is not a clash with itself.
+        self.assertEqual(self.tracker.edit_product(honey.id, name="HONEY").name, "HONEY")
+
+    def test_renamed_product_shows_on_its_orders(self) -> None:
+        product = self._product()
+        order = self.tracker.add_order(purchaser="Jim", quantity="2")
+        self.tracker.edit_product(product.id, name="Wildflower honey")
+        self.assertEqual(
+            self.tracker.get_order(order.id).product_name, "Wildflower honey"
+        )
+
+    def test_price_change_warning(self) -> None:
+        product = self._product()
+        # No orders yet: nothing to reprice.
+        self.assertEqual(self.tracker.price_change_warning(product.id, "14"), "")
+        self.tracker.add_order(purchaser="Jim", quantity="2")
+        self.assertEqual(self.tracker.price_change_warning(product.id, None), "")
+        self.assertEqual(self.tracker.price_change_warning(product.id, "12.5"), "")
+        warning = self.tracker.price_change_warning(product.id, "14")
+        self.assertIn("1 order(s)", warning)
+        self.assertIn("already collected", warning)
+        with self.assertRaises(TrackerError):
+            self.tracker.price_change_warning(product.id, "abc")
+
     def test_financials_split_cash_from_other(self) -> None:
         self._product()  # Honey, 12.50 / jar
         cash = self.tracker.add_order(purchaser="Jim", quantity="10")
@@ -575,6 +673,41 @@ class InteractiveTests(unittest.TestCase):
         self.assertEqual(orders[0].quantity_received, Decimal("5"))
         self.assertIn("5 / 10", stdout.getvalue())
 
+    def _run(self, *lines: str) -> str:
+        stdout = io.StringIO()
+        script = "\n".join([*lines, "0", ""])
+        session = InteractiveSession(self.tracker, io.StringIO(script), stdout)
+        self.assertEqual(session.run(), 0)
+        return stdout.getvalue()
+
+    def test_edit_order_keeps_blank_answers(self) -> None:
+        self.tracker.add_product(name="Honey", unit="jar", unit_price="12.50")
+        order = self.tracker.add_order(purchaser="Jim", quantity="10")
+        # Only one product, so the product question is not asked.
+        out = self._run("8", "o", str(order.id), "Jimmy", "", "venmo")
+        edited = self.tracker.get_order(order.id)
+        self.assertEqual(edited.purchaser, "Jimmy")
+        self.assertEqual(edited.quantity_ordered, Decimal("10"))
+        self.assertEqual(edited.payment_method, "venmo")
+        self.assertIn("Updated #1", out)
+
+    def test_edit_product_price_needs_confirming_and_dash_clears(self) -> None:
+        self.tracker.add_product(
+            name="Honey", unit="jar", unit_price="12.50", sku="H-1"
+        )
+        self.tracker.add_order(purchaser="Jim", quantity="10")
+        out = self._run("8", "p", "Honey", "", "", "14", "-", "", "no")
+        self.assertIn("including money already collected", out)
+        self.assertIn("Nothing was changed", out)
+        product = self.tracker.find_product("Honey")
+        self.assertEqual(product.unit_price, Decimal("12.50"))
+        self.assertEqual(product.sku, "H-1")
+
+        self._run("8", "p", "Honey", "", "", "14", "-", "", "yes")
+        product = self.tracker.find_product("Honey")
+        self.assertEqual(product.unit_price, Decimal("14.00"))
+        self.assertEqual(product.sku, "")
+
 
 class CliTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -638,6 +771,45 @@ class CliTests(unittest.TestCase):
     def test_cli_rejects_order_without_product(self) -> None:
         code = main(["--db", self.db, "order", "--buyer", "Jim", "--qty", "2"])
         self.assertEqual(code, 1)
+
+    def test_cli_edit_order(self) -> None:
+        with SalesTracker(self.db) as tracker:
+            tracker.add_product(name="Honey", unit="jar", unit_price="12.50")
+            order = tracker.add_order(purchaser="Jim", quantity="10")
+            tracker.set_received(order.id, "5")
+        edit = ["--db", self.db, "edit", "order", str(order.id)]
+        # Nothing to change, and a quantity under what was received, both fail.
+        self.assertEqual(main(edit), 1)
+        self.assertEqual(main([*edit, "--qty", "3"]), 1)
+        self.assertEqual(
+            main([*edit, "--buyer", "Jimmy", "--qty", "6", "--method", "venmo"]), 0
+        )
+        with SalesTracker(self.db) as tracker:
+            edited = tracker.get_order(order.id)
+        self.assertEqual(edited.purchaser, "Jimmy")
+        self.assertEqual(edited.quantity_ordered, Decimal("6"))
+        self.assertEqual(edited.quantity_received, Decimal("5"))
+        self.assertEqual(edited.payment_method, "venmo")
+
+    def test_cli_edit_product_price_needs_yes_once_orders_exist(self) -> None:
+        with SalesTracker(self.db) as tracker:
+            product = tracker.add_product(name="Honey", unit="jar", unit_price="12.50")
+        edit = ["--db", self.db, "edit", "product", str(product.id)]
+        self.assertEqual(main(edit), 1)
+        # No orders yet, so a price change goes straight through.
+        self.assertEqual(main([*edit, "--price", "13"]), 0)
+        with SalesTracker(self.db) as tracker:
+            tracker.add_order(purchaser="Jim", quantity="10")
+        self.assertEqual(main([*edit, "--price", "14"]), 1)
+        with SalesTracker(self.db) as tracker:
+            self.assertEqual(tracker.get_product(product.id).unit_price, Decimal("13.00"))
+        # Renaming does not touch the price, so it needs no --yes.
+        self.assertEqual(main([*edit, "--name", "Wildflower"]), 0)
+        self.assertEqual(main([*edit, "--price", "14", "--yes"]), 0)
+        with SalesTracker(self.db) as tracker:
+            edited = tracker.get_product(product.id)
+        self.assertEqual(edited.name, "Wildflower")
+        self.assertEqual(edited.unit_price, Decimal("14.00"))
 
 
 def _tk_available() -> bool:
@@ -958,12 +1130,20 @@ class GuiPresentationTests(unittest.TestCase):
         return dx <= 60 and dy <= 60
 
     def test_dialogs_open_centered_on_the_main_window(self) -> None:
-        from gui import MoneyDialog, ProductWizard, SettingsDialog
+        from gui import (
+            MoneyDialog, OrderEditor, ProductEditor, ProductWizard, SettingsDialog,
+        )
 
+        order = self.app.tracker.add_order(purchaser="Ann", quantity="1")
+        product_id = order.product_id
         for factory in (
             lambda: ProductWizard(self.app, self.app.tracker, lambda: None),
             lambda: SettingsDialog(self.app, self.app.tracker, lambda: None),
             lambda: MoneyDialog(self.app, self.app.tracker),
+            lambda: OrderEditor(self.app, self.app.tracker, order.id, lambda _o: None),
+            lambda: ProductEditor(
+                self.app, self.app.tracker, product_id, lambda _p, _n: None
+            ),
         ):
             dialog = factory()
             dialog.update_idletasks()
@@ -1154,6 +1334,132 @@ class GuiPresentationTests(unittest.TestCase):
                 return child
             stack.extend(child.winfo_children())
         return None
+
+
+@unittest.skipUnless(HAVE_TK, "no display available for tkinter")
+class GuiEditTests(unittest.TestCase):
+    """The edit dialogs reached from the main window."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db = str(Path(self.tmp.name) / "sales.db")
+        from gui import SalesApp
+
+        self.app = SalesApp(self.db, auto_setup=False)
+        self.addCleanup(self.app.destroy)
+        self.addCleanup(self.app.tracker.close)
+        self.tracker = self.app.tracker
+        self.honey = self.tracker.add_product(name="Honey", unit="jar", unit_price="12.50")
+        self.jam = self.tracker.add_product(name="Jam", unit="jar", unit_price="4.00")
+        self.order = self.tracker.add_order(purchaser="Jim", quantity="10", product="Honey")
+        self.tracker.set_received(self.order.id, "5")
+        self.app.refresh()
+        self.app.update_idletasks()
+
+    def _select(self) -> None:
+        self.app.tree.selection_set(str(self.order.id))
+        self.app._on_select()
+
+    def test_edit_order_needs_a_selection(self) -> None:
+        self.app.tree.selection_remove(*self.app.tree.selection())
+        self.assertIsNone(self.app.open_order_editor())
+        self.assertIn("Select an order", self.app.var_error.get())
+
+    def test_edit_order_updates_the_row(self) -> None:
+        self._select()
+        dialog = self.app.open_order_editor()
+        self.assertEqual(dialog.var_purchaser.get(), "Jim")
+        self.assertEqual(dialog.var_method.get(), "Cash")
+        dialog.var_purchaser.set("Jimmy")
+        dialog.var_product.set("Jam")
+        dialog.var_qty.set("12")
+        dialog.var_method.set("Venmo")
+        dialog.save()
+        self.app.update_idletasks()
+        self.assertFalse(dialog.winfo_exists())
+
+        edited = self.tracker.get_order(self.order.id)
+        self.assertEqual(edited.purchaser, "Jimmy")
+        self.assertEqual(edited.product_name, "Jam")
+        self.assertEqual(edited.quantity_ordered, Decimal("12"))
+        self.assertEqual(edited.quantity_received, Decimal("5"))
+        self.assertEqual(edited.payment_method, "venmo")
+        values = self.app.tree.item(str(self.order.id), "values")
+        self.assertEqual(values[0], "Jimmy")
+        self.assertIn("5 / 12", values[2])
+        self.assertEqual(values[-1], "Venmo")
+        self.assertEqual(self.app.tree.selection(), (str(self.order.id),))
+
+    def test_rejected_order_edit_stays_open_and_writes_nothing(self) -> None:
+        self._select()
+        dialog = self.app.open_order_editor()
+        self.addCleanup(dialog.destroy)
+        dialog.var_purchaser.set("Ann")
+        dialog.var_qty.set("3")
+        dialog.save()
+        self.assertTrue(dialog.winfo_exists())
+        self.assertIn("already received", dialog.var_error.get())
+        self.assertEqual(self.tracker.get_order(self.order.id).purchaser, "Jim")
+
+    def test_product_editor_starts_on_the_selected_orders_product(self) -> None:
+        self.app.var_product.set("Jam")
+        self._select()
+        dialog = self.app.open_product_editor()
+        self.addCleanup(dialog.destroy)
+        self.assertEqual(dialog.var_name.get(), "Honey")
+        self.assertIn("1 order(s)", dialog.var_attached.get())
+        # Switching the picker loads the other product's fields.
+        dialog.var_pick.set("Jam")
+        dialog._load()
+        self.assertEqual(dialog.var_price.get(), "4.00")
+        self.assertEqual(dialog.var_attached.get(), "")
+
+    def test_price_change_asks_before_repricing_orders(self) -> None:
+        self._select()
+        dialog = self.app.open_product_editor()
+        dialog.var_price.set("14")
+        with patch("gui.messagebox.askyesno", return_value=False) as asked:
+            dialog.save()
+        asked.assert_called_once()
+        self.assertTrue(dialog.winfo_exists())
+        self.assertEqual(self.tracker.get_product(self.honey.id).unit_price,
+                         Decimal("12.50"))
+        with patch("gui.messagebox.askyesno", return_value=True):
+            dialog.save()
+        self.assertFalse(dialog.winfo_exists())
+        self.assertEqual(self.tracker.get_product(self.honey.id).unit_price,
+                         Decimal("14.00"))
+
+    def test_edit_without_a_price_change_does_not_ask(self) -> None:
+        self._select()
+        dialog = self.app.open_product_editor()
+        dialog.var_notes.set("raw, unfiltered")
+        with patch("gui.messagebox.askyesno") as asked:
+            dialog.save()
+        asked.assert_not_called()
+        self.assertEqual(self.tracker.get_product(self.honey.id).notes, "raw, unfiltered")
+
+    def test_renaming_the_form_product_keeps_the_form_on_it(self) -> None:
+        self.app.var_product.set("Jam")
+        self.app.tree.selection_remove(*self.app.tree.selection())
+        dialog = self.app.open_product_editor()
+        self.assertEqual(dialog.var_name.get(), "Jam")
+        dialog.var_name.set("Strawberry jam")
+        dialog.save()
+        self.app.update_idletasks()
+        self.assertEqual(self.app.var_product.get(), "Strawberry jam")
+        self.assertIn("Strawberry jam", self.app.product_combo["values"])
+
+    def test_duplicate_name_is_shown_in_the_dialog(self) -> None:
+        self.app.tree.selection_remove(*self.app.tree.selection())
+        self.app.var_product.set("Jam")
+        dialog = self.app.open_product_editor()
+        self.addCleanup(dialog.destroy)
+        dialog.var_name.set("honey")
+        dialog.save()
+        self.assertTrue(dialog.winfo_exists())
+        self.assertIn("already on file", dialog.var_error.get())
 
 
 class ThemeTests(unittest.TestCase):

@@ -3,6 +3,8 @@
 
 from salestracker.ui.gui import (
     MoneyDialog,
+    OrderEditor,
+    ProductEditor,
     ProductWizard,
     SalesApp,
     SettingsDialog,
@@ -10,7 +12,16 @@ from salestracker.ui.gui import (
     messagebox,
 )
 
-__all__ = ["MoneyDialog", "ProductWizard", "SalesApp", "SettingsDialog", "main", "messagebox"]
+__all__ = [
+    "MoneyDialog",
+    "OrderEditor",
+    "ProductEditor",
+    "ProductWizard",
+    "SalesApp",
+    "SettingsDialog",
+    "main",
+    "messagebox",
+]
 
 if __name__ == "__main__":
     raise SystemExit(main())

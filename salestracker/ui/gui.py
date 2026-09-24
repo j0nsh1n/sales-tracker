@@ -29,6 +29,7 @@ from salestracker import (
     DENOMINATIONS,
     PAYMENT_METHODS,
     UNITS,
+    Order,
     Product,
     SalesTracker,
     TrackerError,
@@ -680,6 +681,198 @@ class SettingsDialog(tk.Toplevel):
         messagebox.showinfo("Reset", "Products and orders were cleared.", parent=self)
 
 
+class _EditDialog(tk.Toplevel):
+    """Shared frame for the two edit dialogs: fields, an error line, buttons."""
+
+    def __init__(self, master: tk.Tk, tracker: SalesTracker, title: str) -> None:
+        super().__init__(master)
+        self.tracker = tracker
+        self.title(title)
+        self.configure(bg=PANEL)
+        self.transient(master)
+        self.grab_set()
+        self.resizable(False, False)
+        self.var_error = tk.StringVar()
+        self._focus_job: str | None = None
+        self.pad = ttk.Frame(self, style="Panel.TFrame", padding=24)
+        self.pad.pack(fill="both", expand=True)
+
+    def _entry(self, label: str, variable: tk.StringVar) -> ttk.Entry:
+        ttk.Label(self.pad, text=label, style="Field.TLabel").pack(anchor="w")
+        entry = ttk.Entry(self.pad, textvariable=variable, style="Ticket.TEntry",
+                          width=36)
+        entry.pack(fill="x", ipady=2, pady=(3, 12))
+        return entry
+
+    def _combo(self, label: str, variable: tk.StringVar, values,
+               readonly: bool = True) -> ttk.Combobox:
+        ttk.Label(self.pad, text=label, style="Field.TLabel").pack(anchor="w")
+        combo = ttk.Combobox(self.pad, textvariable=variable, values=list(values),
+                             state="readonly" if readonly else "normal",
+                             style="Ticket.TCombobox")
+        combo.pack(fill="x", ipady=2, pady=(3, 12))
+        return combo
+
+    def _focus_later(self, widget: tk.Misc) -> None:
+        # Deferred until the window is mapped, or the focus does not stick.
+        self._focus_job = self.after(50, widget.focus_set)
+
+    def destroy(self) -> None:
+        # A dialog closed within the delay would otherwise leave the callback
+        # to fire on a widget that no longer exists.
+        if self._focus_job is not None:
+            self.after_cancel(self._focus_job)
+            self._focus_job = None
+        super().destroy()
+
+    def _finish(self, save_text: str) -> None:
+        ttk.Label(self.pad, textvariable=self.var_error, style="Error.TLabel",
+                  wraplength=380).pack(anchor="w", pady=(0, 12))
+        nav = ttk.Frame(self.pad, style="Panel.TFrame")
+        nav.pack(fill="x")
+        ttk.Button(nav, text="Cancel", style="Ghost.TButton",
+                   command=self.destroy).pack(side="left")
+        ttk.Button(nav, text=save_text, style="Primary.TButton",
+                   command=self.save).pack(side="right")
+        self.bind("<Return>", lambda _e: self.save())
+        self.bind("<Escape>", lambda _e: self.destroy())
+        center_on_parent(self, self.master)
+
+    def save(self) -> None:
+        raise NotImplementedError
+
+
+class OrderEditor(_EditDialog):
+    """Correct a logged order. Received is left to the inline box on the list."""
+
+    def __init__(self, master: tk.Tk, tracker: SalesTracker, order_id: int,
+                 on_saved) -> None:
+        super().__init__(master, tracker, "Edit order")
+        self.order_id = order_id
+        self.on_saved = on_saved
+        order = tracker.get_order(order_id)
+
+        ttk.Label(self.pad, text=f"Edit {order.purchaser}'s order",
+                  style="Section.TLabel").pack(anchor="w")
+        ttk.Label(
+            self.pad,
+            text=f"{format_qty(order.quantity_received)} {order.product_unit} "
+            "received so far. To record a hand-off, use the received box on "
+            "the list instead.",
+            style="Hint.TLabel", wraplength=380,
+        ).pack(anchor="w", pady=(4, 16))
+
+        self.var_purchaser = tk.StringVar(value=order.purchaser)
+        self.var_product = tk.StringVar(value=order.product_name)
+        self.var_qty = tk.StringVar(value=format_qty(order.quantity_ordered))
+        self.var_method = tk.StringVar(value=format_payment_method(order.payment_method))
+
+        self.purchaser_entry = self._entry("PURCHASER", self.var_purchaser)
+        self._combo("PRODUCT", self.var_product,
+                    [product.name for product in tracker.list_products()])
+        self._entry("HOW MANY ORDERED", self.var_qty)
+        self._combo("PAID BY", self.var_method,
+                    [format_payment_method(m) for m in PAYMENT_METHODS])
+        self._finish("Save changes")
+        self._focus_later(self.purchaser_entry)
+
+    def save(self) -> None:
+        try:
+            order = self.tracker.edit_order(
+                self.order_id,
+                purchaser=self.var_purchaser.get(),
+                quantity=self.var_qty.get(),
+                product=self.var_product.get(),
+                payment_method=self.var_method.get().strip().lower() or CASH,
+            )
+        except TrackerError as exc:
+            self.var_error.set(str(exc))
+            return
+        self.on_saved(order)
+        self.destroy()
+
+
+class ProductEditor(_EditDialog):
+    """Correct a product. Warns before a price change reprices its orders."""
+
+    def __init__(self, master: tk.Tk, tracker: SalesTracker, product_id: int,
+                 on_saved) -> None:
+        super().__init__(master, tracker, "Edit product")
+        self.on_saved = on_saved
+        self.products = {product.name: product for product in tracker.list_products()}
+        self.product = tracker.get_product(product_id)
+
+        ttk.Label(self.pad, text="Edit a product", style="Section.TLabel").pack(anchor="w")
+        ttk.Label(
+            self.pad,
+            text="Changes show on every order for this product.",
+            style="Hint.TLabel", wraplength=380,
+        ).pack(anchor="w", pady=(4, 16))
+
+        self.var_pick = tk.StringVar(value=self.product.name)
+        self.var_name = tk.StringVar()
+        self.var_unit = tk.StringVar()
+        self.var_price = tk.StringVar()
+        self.var_sku = tk.StringVar()
+        self.var_notes = tk.StringVar()
+        self.var_attached = tk.StringVar()
+
+        self.pick_combo = self._combo("EDITING", self.var_pick, self.products)
+        self.pick_combo.bind("<<ComboboxSelected>>", lambda _e: self._load())
+        self.name_entry = self._entry("NAME", self.var_name)
+        self._combo("COUNTED AS", self.var_unit, UNITS, readonly=False)
+        self._entry("PRICE PER UNIT", self.var_price)
+        ttk.Label(self.pad, textvariable=self.var_attached, style="Hint.TLabel",
+                  wraplength=380).pack(anchor="w", pady=(0, 12))
+        self._entry("SKU", self.var_sku)
+        self._entry("NOTES", self.var_notes)
+        self._finish("Save changes")
+        self._load()
+        self._focus_later(self.name_entry)
+
+    def _load(self) -> None:
+        self.product = self.products.get(self.var_pick.get(), self.product)
+        self.var_name.set(self.product.name)
+        self.var_unit.set(self.product.unit)
+        self.var_price.set(str(self.product.unit_price))
+        self.var_sku.set(self.product.sku)
+        self.var_notes.set(self.product.notes)
+        self.var_error.set("")
+        attached = self.tracker.count_orders_for_product(self.product.id)
+        self.var_attached.set(
+            f"Used by {attached} order(s). A new price applies to all of them."
+            if attached else ""
+        )
+
+    def save(self) -> None:
+        try:
+            warning = self.tracker.price_change_warning(
+                self.product.id, self.var_price.get()
+            )
+        except TrackerError as exc:
+            self.var_error.set(str(exc))
+            return
+        if warning and not messagebox.askyesno(
+            "Edit product", f"{warning}\n\nChange the price anyway?", parent=self
+        ):
+            return
+        previous = self.product.name
+        try:
+            product = self.tracker.edit_product(
+                self.product.id,
+                name=self.var_name.get(),
+                unit=self.var_unit.get(),
+                unit_price=self.var_price.get(),
+                sku=self.var_sku.get(),
+                notes=self.var_notes.get(),
+            )
+        except TrackerError as exc:
+            self.var_error.set(str(exc))
+            return
+        self.on_saved(product, previous)
+        self.destroy()
+
+
 class MoneyDialog(tk.Toplevel):
     """Expected money on the left, an independent bill count on the right.
 
@@ -1138,6 +1331,8 @@ class SalesApp(tk.Tk):
         menu = tk.Menu(self)
         ledger = tk.Menu(menu, tearoff=0)
         ledger.add_command(label="New product…", command=self.open_wizard)
+        ledger.add_command(label="Edit selected order…", command=self.open_order_editor)
+        ledger.add_command(label="Edit product…", command=self.open_product_editor)
         ledger.add_command(label="Money…", command=self.open_money)
         ledger.add_command(label="Export CSV…", command=self.export_csv)
         ledger.add_command(label="Settings…", command=self.open_settings)
@@ -1278,6 +1473,10 @@ class SalesApp(tk.Tk):
         ttk.Label(row, text="SEARCH", style="StatCaption.TLabel").pack(
             side="right", padx=(0, 8)
         )
+        ttk.Button(row, text="Edit order", style="Ghost.TButton",
+                   command=self.open_order_editor).pack(side="right", padx=(0, 20))
+        ttk.Button(row, text="Edit product", style="Ghost.TButton",
+                   command=self.open_product_editor).pack(side="right", padx=(0, 8))
 
     def _build_table(self) -> None:
         wrap = ttk.Frame(self, style="App.TFrame", padding=(20, 0, 20, 0))
@@ -1311,7 +1510,8 @@ class SalesApp(tk.Tk):
         ttk.Label(foot, textvariable=self.var_ok, style="Ok.TLabel").pack(side="left")
         ttk.Label(
             foot,
-            text="Double-click a row (or press Enter) to record what they received.",
+            text="Double-click a row (or press Enter) to record what they "
+            "received  ·  Ctrl+E to edit it",
             style="Foot.TLabel",
         ).pack(side="right")
 
@@ -1319,6 +1519,7 @@ class SalesApp(tk.Tk):
         self.bind("<Control-s>", lambda _e: self.log_order())
         self.bind("<Control-n>", lambda _e: self.open_wizard())
         self.bind("<Control-comma>", lambda _e: self.open_settings())
+        self.bind("<Control-e>", lambda _e: self.open_order_editor())
         for widget in (self.purchaser_entry, self.qty_entry, self.product_combo):
             widget.bind("<Return>", lambda _e: self.log_order())
 
@@ -1345,6 +1546,32 @@ class SalesApp(tk.Tk):
     def open_money(self) -> None:
         MoneyDialog(self, self.tracker)
 
+    def open_order_editor(self) -> OrderEditor | None:
+        order_id = self._selected_id()
+        if order_id is None:
+            self.var_error.set("Select an order on the list first.")
+            return None
+        self.var_error.set("")
+        self._cancel_edit()
+        return OrderEditor(self, self.tracker, order_id, on_saved=self._on_order_edited)
+
+    def open_product_editor(self) -> ProductEditor | None:
+        products = self.tracker.list_products()
+        if not products:
+            self.var_error.set("Establish a product first.")
+            return None
+        self.var_error.set("")
+        # Start on the product the operator is most likely looking at: the
+        # selected order's, then the one picked in the order form.
+        start = products[0].id
+        by_name = {product.name: product.id for product in products}
+        order_id = self._selected_id()
+        if order_id is not None:
+            start = self.tracker.get_order(order_id).product_id
+        elif self.var_product.get() in by_name:
+            start = by_name[self.var_product.get()]
+        return ProductEditor(self, self.tracker, start, on_saved=self._on_product_edited)
+
     def export_csv(self) -> None:
         target = filedialog.asksaveasfilename(
             parent=self, title="Export orders and totals",
@@ -1365,6 +1592,17 @@ class SalesApp(tk.Tk):
         self.refresh(select_product=product.name)
         self.var_error.set("")
         self._flash(f"Added {product.name}")
+
+    def _on_order_edited(self, order: Order) -> None:
+        self.refresh(select_id=order.id)
+        self._flash(f"Updated {order.purchaser}'s order")
+
+    def _on_product_edited(self, product: Product, previous_name: str) -> None:
+        # Keep the order form on a renamed product rather than letting it fall
+        # back to whichever product sorts first.
+        follow = product.name if self.var_product.get() == previous_name else None
+        self.refresh(select_product=follow)
+        self._flash(f"Updated {product.name}")
 
     def _sync_qty_label(self) -> None:
         name = self.var_product.get().strip()
