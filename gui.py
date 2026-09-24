@@ -2,7 +2,7 @@
 """Desktop ledger entry point. Implementation lives in salestracker.ui.gui."""
 
 from salestracker.ui.gui import (
-    MoneyDialog,
+    MoneyPanel,
     OrderEditor,
     ProductEditor,
     ProductWizard,
@@ -13,7 +13,7 @@ from salestracker.ui.gui import (
 )
 
 __all__ = [
-    "MoneyDialog",
+    "MoneyPanel",
     "OrderEditor",
     "ProductEditor",
     "ProductWizard",

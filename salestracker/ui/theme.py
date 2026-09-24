@@ -10,6 +10,9 @@ because one colour cannot do both jobs in both themes: FIELD is the surface
 under typed text and table rows, and ON_ACCENT is text sitting on an accent
 fill. In light mode both are white; in dark mode FIELD goes near-black while
 ON_ACCENT stays dark against a lightened accent.
+
+PAGE sits behind the cards (CARD) of the main window; the sidebar keeps its
+own dark set in both themes so the navigation reads as one strip.
 """
 
 from __future__ import annotations
@@ -46,6 +49,15 @@ PALETTES: dict[str, dict[str, str]] = {
         "FIELD": "#FFFFFF",
         "ON_ACCENT": "#FFFFFF",
         "RECEIVED_BG": "#F1F7F3",
+        "PAGE": "#F2F4F3",
+        "CARD": "#FFFFFF",
+        "WARN": "#8A5300",
+        "WARN_SOFT": "#FBF0DC",
+        "SIDEBAR": "#0F2A21",
+        "SIDEBAR_ACTIVE": "#1C4435",
+        "SIDEBAR_INK": "#F1F6F3",
+        "SIDEBAR_MUTED": "#A9C2B7",
+        "SIDEBAR_ACCENT": "#5FD6A0",
     },
     DARK: {
         "BG": "#14171A",
@@ -65,6 +77,15 @@ PALETTES: dict[str, dict[str, str]] = {
         "FIELD": "#111518",
         "ON_ACCENT": "#062018",
         "RECEIVED_BG": "#1B2A22",
+        "PAGE": "#101316",
+        "CARD": "#191E22",
+        "WARN": "#F2B65E",
+        "WARN_SOFT": "#3A2D18",
+        "SIDEBAR": "#0A0D0F",
+        "SIDEBAR_ACTIVE": "#1E3A2E",
+        "SIDEBAR_INK": "#E8EBEC",
+        "SIDEBAR_MUTED": "#98A59F",
+        "SIDEBAR_ACCENT": "#4ECB8F",
     },
 }
 

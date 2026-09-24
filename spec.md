@@ -89,12 +89,21 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
   - Script: `python3 sales_tracker.py` (interactive menu) or subcommands
     (`product`, `order`, `receive`, `list`, `summary`, `money`, `export`,
     `pay`, `edit`, `delete`, `reset`, …)
-- GUI: product wizard on first run if the catalog is empty; order ticket
-  (purchaser + quantity); list with received/ordered; a separate
-  received-so-far box for the selected row; Edit order and Edit product
-  beside the list filters (also in the Ledger menu, and Ctrl+E for the
-  selected order); Settings in the Ledger menu and header. Settings holds the Appearance choice, and the order and
-  product delete pickers behind a typed `RESET` unlock.
+- GUI: a sidebar switches between four pages — Orders, Buyers, Products,
+  and Money — and carries New product, Export CSV, Settings, and the
+  Appearance toggle. Product wizard on first run if the catalog is empty,
+  with a welcome card in place of the order form until a product exists.
+  Orders: header stat tiles (outstanding, units to hand out, still owed,
+  cash in the drawer); a one-line order form (purchaser, quantity,
+  product, payment method); the list with received/ordered, filterable and
+  sortable by column; and an inspector for the selected row holding the
+  separate received-so-far box, one-step hand-over controls (−1, +1, all),
+  the payment method, and Edit order. Buyers groups orders by purchaser
+  with what each still owes. Products shows each product as a card with
+  its sales and an Edit button. Money is the money page described above.
+  Edit product is also in the Ledger menu; Ctrl+E edits the selected
+  order. Settings holds the Appearance choice, and the order and product
+  delete pickers behind a typed `RESET` unlock.
 - CLI interactive session asks one question at a time for product setup,
   logging, and received-so-far updates.
 - Example: establish Honey (jar, $12.50) → log Jim bought 10 → enter 5 in
@@ -123,7 +132,8 @@ payment processor, inventory system, tax filer, CRM, or double-entry ledger.
 - Major components:
   - `sales_tracker.py` — `SalesTracker`, product/order schema, interactive
     CLI and flag CLI
-  - `gui.py` — Tkinter ledger (product wizard, list, received box, Settings)
+  - `gui.py` — Tkinter ledger (sidebar pages, order list and inspector,
+    product wizard, Settings)
   - `salestracker/ui/theme.py` — light/dark palettes and OS theme detection
   - `test_sales_tracker.py` — unittest (library, CLI, interactive session,
     GUI smoke)

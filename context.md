@@ -5,7 +5,7 @@
 - App is a **SQLite ledger** with two entry points: interactive CLI
   (`sales_tracker.py`) and Tkinter UI (`gui.py`). Implementation lives in
   the `salestracker` package; root files are shims.
-- Tests: `python3 -m unittest test_sales_tracker.py` — 106 tests, green on
+- Tests: `python3 -m unittest test_sales_tracker.py` — 123 tests, green on
   Linux (cloud container, 3.14 via `uv python install 3.14`, GUI under
   `xvfb-run`). Packaged build: `python3 tools/smoke_test.py`.
   Lint / types: **not configured**.
@@ -62,9 +62,17 @@ Product 1---* Order
   orders. Legacy `sales` import is migration 0 → 1 (received starts at 0).
   Newer-than-code databases raise TrackerError.
 - GUI auto-opens the product wizard when the catalog is empty. The
-  "Establish a product" button belongs to that empty state and disappears
-  with it, so the header carries its own New product button; without one
-  a second product needed Ctrl+N or the menu.
+  "Establish a product" button belongs to the welcome card and disappears
+  with it, so the sidebar carries its own New product button.
+- GUI layout (2026-09-24 redesign): sidebar + four pages (`show_page`),
+  Money is a page (`MoneyPanel`), not a dialog. Plain Tk widgets register
+  their palette names with `SalesApp.paint()` and `_repaint` reapplies
+  them after the generic canvas pass, which would otherwise leave page
+  canvases in the dialog colour. Entry hints are `Placeholder` overlays,
+  so the variables never hold hint text. A Treeview cuts off columns it
+  cannot fit instead of shrinking them, so `_fit_columns` shares the width
+  on every resize. Paid by is kept in each row's values but hidden from
+  the Orders list (`DISPLAY`); six columns beside the inspector truncated.
 - Settings reset requires typing RESET so it cannot be a stray click.
 - PyInstaller is build-only, not a runtime dependency. The pin is 6.22.2
   because 6.21.0 collects no Tcl/Tk data against Python 3.14 (Tcl/Tk 9
@@ -121,15 +129,20 @@ Product 1---* Order
 ## Session Handoff
 - **Date:** 2026-09-24
 - **Branch:** `claude/loving-sagan-cstbui` (from `main` at v0.1.5)
-- **Done:** edit orders and products after saving. Store `edit_order`,
-  `edit_product`, `price_change_warning`; CLI `edit order|product` and
-  interactive menu item 8; GUI `OrderEditor` / `ProductEditor` dialogs
-  from the filter row, Ledger menu, and Ctrl+E. spec.md gained an Edit
-  bullet and two acceptance criteria, approved by the human this session.
-- **Verified:** 106 tests green under xvfb (34 skip headless). Dialogs
-  checked by screenshot in light and dark at the minimum window width.
-- **Open:** Price is not snapshotted per order, so repricing is warned
-  about, not prevented. The editable unit combobox's arrow stays light in
-  dark mode (wizard too). Coins, zelle/card, history binaries as before.
-- **Next:** review and merge the branch; decide on per-order price
-  snapshots (schema v4) if repricing old orders is unwanted.
+- **Done:** (1) edit orders and products (store, CLI, GUI dialogs).
+  (2) Desktop redesign: sidebar pages (Orders, Buyers, Products, Money),
+  header stat tiles, sentence order form, order inspector with hand-over
+  steppers and payment pills, sortable columns, product cards, Money as a
+  page. spec.md GUI description updated; the human asked for a drastic
+  UI change this session.
+- **Verified:** 123 tests green under xvfb on 3.14 (uv) and on system
+  3.12 with Inter / JetBrains Mono installed; 51 skip headless. Every page
+  checked by screenshot in light and dark at 1260x800 and at the minimum
+  1180x700.
+  Linux onefile rebuilt with PyInstaller 6.22.2 and `tools/smoke_test.py`
+  passed (window titled Sales Tracker, first-run wizard on top).
+- **Open:** price is not snapshotted per order (repricing warned about,
+  not prevented). Windows exe not rebuilt locally; CI builds it. At the
+  minimum width the Status column truncates slightly. Coins, zelle/card,
+  history binaries as before.
+- **Next:** review the branch (CI builds both targets), then merge.

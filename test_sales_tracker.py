@@ -1130,16 +1130,13 @@ class GuiPresentationTests(unittest.TestCase):
         return dx <= 60 and dy <= 60
 
     def test_dialogs_open_centered_on_the_main_window(self) -> None:
-        from gui import (
-            MoneyDialog, OrderEditor, ProductEditor, ProductWizard, SettingsDialog,
-        )
+        from gui import OrderEditor, ProductEditor, ProductWizard, SettingsDialog
 
         order = self.app.tracker.add_order(purchaser="Ann", quantity="1")
         product_id = order.product_id
         for factory in (
             lambda: ProductWizard(self.app, self.app.tracker, lambda: None),
             lambda: SettingsDialog(self.app, self.app.tracker, lambda: None),
-            lambda: MoneyDialog(self.app, self.app.tracker),
             lambda: OrderEditor(self.app, self.app.tracker, order.id, lambda _o: None),
             lambda: ProductEditor(
                 self.app, self.app.tracker, product_id, lambda _p, _n: None
@@ -1157,11 +1154,10 @@ class GuiPresentationTests(unittest.TestCase):
                 )
 
     def test_scrolling_dialogs_can_reach_all_their_content(self) -> None:
-        from gui import MoneyDialog, SettingsDialog
+        from gui import SettingsDialog
 
         for factory in (
             lambda: SettingsDialog(self.app, self.app.tracker, lambda: None),
-            lambda: MoneyDialog(self.app, self.app.tracker),
         ):
             dialog = factory()
             dialog.update_idletasks()
@@ -1462,6 +1458,200 @@ class GuiEditTests(unittest.TestCase):
         self.assertIn("already on file", dialog.var_error.get())
 
 
+@unittest.skipUnless(HAVE_TK, "no display available for tkinter")
+class GuiLayoutTests(unittest.TestCase):
+    """Pages, the inspector, sorting, and the other pieces of the main window."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db = str(Path(self.tmp.name) / "sales.db")
+        from gui import SalesApp
+
+        self.app = SalesApp(self.db, auto_setup=False)
+        self.addCleanup(self.app.destroy)
+        self.addCleanup(self.app.tracker.close)
+        tracker = self.tracker = self.app.tracker
+        tracker.add_product(name="Honey", unit="jar", unit_price="12.50")
+        tracker.add_product(name="Candle", unit="each", unit_price="8.00")
+        self.jim = tracker.add_order(purchaser="Jim", quantity="3", product="Honey")
+        self.ann = tracker.add_order(purchaser="ann", quantity="2", product="Candle",
+                                     payment_method="venmo")
+        self.bob = tracker.add_order(purchaser="Bob", quantity="1", product="Honey")
+        tracker.mark_received(self.bob.id)
+        self.app.refresh()
+        self.app.update_idletasks()
+
+    def _select(self, order) -> None:
+        self.app.tree.selection_set(str(order.id))
+        self.app._on_select()
+
+    def test_every_page_can_be_shown_and_only_one_at_a_time(self) -> None:
+        for key, _title in self.app.PAGES:
+            self.app.show_page(key)
+            self.app.update()
+            shown = [k for k, page in self.app.pages.items() if page.winfo_ismapped()]
+            self.assertEqual(shown, [key])
+
+    def test_inspector_follows_the_selection(self) -> None:
+        self.app.tree.selection_remove(*self.app.tree.selection())
+        self.app._on_select()
+        self.app.update()
+        self.assertTrue(self.app.insp_empty.winfo_ismapped())
+        self._select(self.jim)
+        self.app.update()
+        self.assertTrue(self.app.insp_body.winfo_ismapped())
+        self.assertEqual(self.app.var_i_name.get(), "Jim")
+        self.assertEqual(self.app.var_i_money["owed"].get(), "$37.50")
+        self.assertEqual(self.app.var_got.get(), "0")
+
+    def test_steppers_hand_over_one_at_a_time_within_bounds(self) -> None:
+        self._select(self.jim)
+        self.app.step_received(-1)
+        self.assertEqual(self.tracker.get_order(self.jim.id).quantity_received, 0)
+        for expected in (1, 2, 3, 3):
+            self.app.step_received(1)
+            self.assertEqual(
+                self.tracker.get_order(self.jim.id).quantity_received, Decimal(expected)
+            )
+        self.assertEqual(self.app._selected_id(), self.jim.id)
+        self.app.step_received(-1)
+        self.assertEqual(self.tracker.get_order(self.jim.id).quantity_received, 2)
+
+    def test_hand_over_all(self) -> None:
+        self._select(self.jim)
+        self.app.mark_all_received()
+        self.assertTrue(self.tracker.get_order(self.jim.id).fulfilled)
+        self.assertTrue(self.app.btn_all.instate(["disabled"]))
+
+    def test_rejected_received_figure_is_reported_in_the_inspector(self) -> None:
+        self._select(self.jim)
+        self.app.var_got.set("9")
+        self.app.update_received()
+        self.assertIn("cannot be more than 3", self.app.var_i_error.get())
+        self.assertEqual(self.tracker.get_order(self.jim.id).quantity_received, 0)
+
+    def test_payment_pills_change_the_stored_method(self) -> None:
+        self._select(self.jim)
+        self.app.var_i_method.set("venmo")
+        self.app._change_method()
+        self.assertEqual(self.tracker.get_order(self.jim.id).payment_method, "venmo")
+        self.assertEqual(self.app._selected_id(), self.jim.id)
+
+    def test_clicking_a_heading_sorts_and_a_second_click_reverses(self) -> None:
+        def names():
+            return [self.app.tree.item(i, "values")[0] for i in self.app.tree.get_children()]
+
+        self.assertEqual(names(), ["Jim", "ann", "Bob"])
+        self.app.sort_by("purchaser")
+        self.assertEqual(names(), ["ann", "Bob", "Jim"])
+        self.assertTrue(self.app.tree.heading("purchaser", "text").endswith("\u25b2"))
+        self.app.sort_by("purchaser")
+        self.assertEqual(names(), ["Jim", "Bob", "ann"])
+        self.app.sort_by("owed")
+        self.assertEqual(names()[-1], "Jim")
+
+    def test_filter_pills_show_counts(self) -> None:
+        texts = {k: str(p.cget("text")) for k, p in self.app._pills.items()}
+        self.assertTrue(texts["all"].endswith("3"))
+        self.assertTrue(texts["outstanding"].endswith("2"))
+        self.assertTrue(texts["received"].endswith("1"))
+
+    def test_placeholders_never_reach_the_variables(self) -> None:
+        self.assertEqual(self.app.var_purchaser.get(), "")
+        self.assertEqual(self.app.var_search.get(), "")
+        self.app.update()
+        # Shown while empty, gone once there is text.
+        self.assertIn("Who bought?", _mapped_label_texts(self.app))
+        self.app.var_purchaser.set("Zed")
+        self.app.update()
+        self.assertNotIn("Who bought?", _mapped_label_texts(self.app))
+
+    def test_buyers_page_groups_by_name_regardless_of_case(self) -> None:
+        self.tracker.add_order(purchaser="Ann", quantity="1", product="Honey")
+        self.app.refresh()
+        self.app.show_page("buyers")
+        tree = self.app.buyers_tree
+        groups = tree.get_children()
+        self.assertEqual(len(groups), 3)
+        ann = [g for g in groups if g == "buyer:ann"][0]
+        self.assertEqual(len(tree.get_children(ann)), 2)
+        self.app.var_buyer_search.set("bo")
+        self.assertEqual(tree.get_children(), ("buyer:bob",))
+
+    def test_opening_an_order_from_buyers_selects_it_on_orders(self) -> None:
+        self.app.var_filter.set("received")
+        self.app.refresh()
+        self.app.show_page("buyers")
+        self.app.buyers_tree.selection_set(str(self.jim.id))
+        self.app._open_from_buyers()
+        self.assertEqual(self.app._page, "orders")
+        self.assertEqual(self.app._selected_id(), self.jim.id)
+
+    def test_products_page_has_a_card_per_product(self) -> None:
+        self.app.show_page("products")
+        self.app.update()
+        titles = [str(w.cget("text")) for w in _labels(self.app.products_body)
+                  if str(w.cget("style")) == "CardTitle.TLabel"]
+        self.assertEqual(titles, ["Candle", "Honey"])
+
+    def test_money_page_checks_the_drawer_against_cash_only(self) -> None:
+        self._select(self.jim)
+        self.app.mark_all_received()  # $37.50 cash collected, plus Bob's $12.50
+        self.app.show_page("money")
+        panel = self.app.money_panel
+        self.assertEqual(panel.var_expected.get(), "$50.00")
+        panel.var_counts[50].set("1")
+        self.assertIn("Balanced", panel.var_verdict.get())
+        self.assertEqual(panel.var_difference.get(), "$0.00")
+        panel.var_counts[1].set("2")
+        self.assertIn("Over", panel.var_verdict.get())
+        self.assertEqual(panel.var_difference.get(), "+$2.00")
+
+    def test_sidebar_badges_count_what_needs_attention(self) -> None:
+        badge = self.app._nav["orders"]["badge"]
+        self.assertEqual(str(badge.cget("text")), "2")
+        self.assertEqual(str(self.app._nav["products"]["badge"].cget("text")), "2")
+
+    def test_each_unit_reads_as_times(self) -> None:
+        self.app.var_product.set("Candle")
+        self.assertEqual(self.app.var_qty_label.get(), "\u00d7")
+        self.app.var_product.set("Honey")
+        self.assertEqual(self.app.var_qty_label.get(), "jar of")
+
+    def test_welcome_replaces_the_form_until_a_product_exists(self) -> None:
+        from gui import SalesApp
+
+        empty = SalesApp(str(Path(self.tmp.name) / "empty.db"), auto_setup=False)
+        self.addCleanup(empty.destroy)
+        self.addCleanup(empty.tracker.close)
+        empty.update()
+        self.assertTrue(empty.need_product.winfo_ismapped())
+        self.assertFalse(empty.order_form.winfo_ismapped())
+        empty.tracker.add_product(name="Honey", unit="jar", unit_price="1")
+        empty.refresh()
+        empty.update()
+        self.assertFalse(empty.need_product.winfo_ismapped())
+        self.assertTrue(empty.order_form.winfo_ismapped())
+
+
+def _labels(widget):
+    from tkinter import ttk as _ttk
+
+    found, stack = [], [widget]
+    while stack:
+        node = stack.pop(0)
+        for child in node.winfo_children():
+            if isinstance(child, _ttk.Label):
+                found.append(child)
+            stack.append(child)
+    return found
+
+
+def _mapped_label_texts(widget):
+    return [str(w.cget("text")) for w in _labels(widget) if w.winfo_ismapped()]
+
+
 class ThemeTests(unittest.TestCase):
     """Palette bookkeeping and how a stored choice becomes a palette."""
 
@@ -1609,21 +1799,33 @@ class GuiThemeTests(unittest.TestCase):
         self.assertEqual(app.theme_choice, theme.DARK)
         self.assertEqual(app.tracker.get_setting("theme"), theme.DARK)
 
-    def test_open_money_dialog_rules_repaint(self) -> None:
-        from gui import MoneyDialog
-
+    def test_money_page_rules_repaint(self) -> None:
         app = self._app()
         app.set_theme(theme.LIGHT)
-        dialog = MoneyDialog(app, app.tracker)
-        dialog.update_idletasks()
-        self.assertTrue(dialog._rules, "the money page lost its separators")
+        app.show_page("money")
+        app.update_idletasks()
+        rules = app.money_panel._rules
+        self.assertTrue(rules, "the money page lost its separators")
 
         app.set_theme(theme.DARK)
         app.update_idletasks()
         line = theme.PALETTES[theme.DARK]["LINE"]
-        bgs = [rule.cget("bg") for rule in dialog._rules]
-        dialog.destroy()
-        self.assertEqual(bgs, [line] * len(bgs))
+        self.assertEqual([rule.cget("bg") for rule in rules], [line] * len(rules))
+
+    def test_page_surfaces_repaint(self) -> None:
+        # Plain Tk canvases on the page and on cards must not be left in the
+        # dialog colour the generic repaint gives every canvas.
+        app = self._app()
+        app.set_theme(theme.LIGHT)
+        app.show_page("products")
+        app.set_theme(theme.DARK)
+        app.update_idletasks()
+        dark = theme.PALETTES[theme.DARK]
+        self.assertEqual(app.avatar.cget("bg"), dark["CARD"])
+        self.assertEqual(app.brand_mark.cget("bg"), dark["SIDEBAR"])
+        canvases = [c for c in gui_canvases(app.pages["products"])]
+        self.assertTrue(canvases)
+        self.assertTrue(all(c.cget("bg") == dark["PAGE"] for c in canvases))
 
     def test_combobox_dropdown_rebuilds_in_the_new_palette(self) -> None:
         app = self._app()

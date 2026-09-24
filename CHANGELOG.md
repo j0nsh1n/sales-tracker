@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- The desktop window is redesigned around a sidebar with four pages.
+  Orders keeps the list but adds header tiles (outstanding, units to hand
+  out, still owed, cash in the drawer), a one-line order form that reads
+  as a sentence, filter pills with counts, and an order panel beside the
+  list with the buyer, a progress bar, −1 / +1 / All hand-over buttons,
+  the order's money, and one-click payment method. Buyers is new: every
+  order grouped by purchaser with what they still owe. Products is new: a
+  card per product with its sales and an Edit button. Money is now a page
+  rather than a dialog, with the drawer verdict shown large and the
+  difference in dollars.
+- Clicking a column heading sorts the order list; clicking again reverses.
+- Ctrl+1 to Ctrl+4 switch pages, Ctrl+F jumps to search, and + / − on the
+  list hand over or take back one unit.
+
+### Fixed
+- In dark mode the arrow on the product wizard's editable unit box stayed
+  light grey.
+- The footer, which carries confirmations such as "Logged Jim…", was
+  pushed off the bottom of shorter windows.
+
 ### Added
 - Orders and products can be edited after they are saved. Edit order and
   Edit product sit beside the list filters, in the Ledger menu, and Ctrl+E

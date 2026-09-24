@@ -32,14 +32,23 @@ python3 sales_tracker.py reset --orders --yes
 Every order records how it was paid — `cash`, `venmo`, or `other`. Only cash
 counts toward the drawer.
 
-**Money** (button in the header, or `money` on the CLI) shows what you should
+The desktop window has a sidebar with four pages. **Orders** is where you
+work: type a sale into the one-line form ("Jim bought 10 jar of Honey paid
+with Cash"), pick a row, and use the panel beside the list to hand items over
+(+ and − step one at a time, or press + / − on the list), change how it was
+paid, or edit it. Click a column heading to sort. **Buyers** groups every
+order by the person who placed it, with what they still owe. **Products**
+shows a card per product with what it has sold.
+
+**Money** (sidebar, or `money` on the CLI) shows what you should
 have: cash collected, cash still to collect, and the same for non-cash. You
 count your own bills and type in how many of each you hold; the app totals
 them and tells you whether you are balanced, over, or short against *cash
 collected only*. Bill counts are never saved — the point is that the two
 figures are reached independently.
 
-**Appearance** (Settings) switches between Light and Dark. The default,
+**Appearance** (Settings, or the toggle at the bottom of the sidebar)
+switches between Light and Dark. The default,
 System, follows your desktop and changes with it while the app is open —
 switch Windows to dark and the ledger follows without a restart. The choice
 is remembered in `sales.db` and is not cleared by a reset.
@@ -48,8 +57,8 @@ is remembered in `sales.db` and is not cleared by a reset.
 Payment methods read as `Cash` and `Venmo` on screen but stay lowercase in
 the CSV and on the CLI, which is what those commands take as input.
 
-**Fix a mistake** with Edit order or Edit product next to the list filters
-(Ctrl+E edits the selected order), menu item 8 in the interactive script, or
+**Fix a mistake** with Edit order in the order panel (Ctrl+E), Edit on a
+product's card, the Ledger menu, menu item 8 in the interactive script, or
 `edit` on the CLI. Only what you change is changed. An order's quantity
 cannot go below what has already been handed out. Price belongs to the
 product, so changing it reprices every order for that product, including
