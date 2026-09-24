@@ -24,6 +24,7 @@
 | `release/` | gitignored (local binaries and `sales.db`; not tracked) |
 | `salestracker/ui/theme.py` | Light/dark palettes and OS theme detection |
 | `tools/smoke_test.py` | Launches a frozen build, requires a real window |
+| `docs/explorations/` | Four clickable HTML design directions (A–D) on one shared fixture; not product code |
 | `requirements-build.txt` | Build-only pin: pyinstaller==6.22.2 |
 | `.github/workflows/ci.yml` | Tests, then Windows + Linux package; Releases on `v*` |
 | `agents.md` | Global coding rules |
@@ -146,3 +147,5 @@ Product 1---* Order
   minimum width the Status column truncates slightly. Coins, zelle/card,
   history binaries as before.
 - **Next:** review the branch (CI builds both targets), then merge.
+  Separately, `docs/explorations/index.html` holds four UI directions
+  awaiting the human's choice; none is implemented in the app.

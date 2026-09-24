@@ -1,0 +1,499 @@
+<meta charset="utf-8">
+<title>Register</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="shared.css">
+<style>
+  /* Direction B — Register. Everything on one screen, driven from the keyboard. */
+  :root { --radius: 4px; --b-rail: 232px; --b-money: 300px; }
+  body { font-size: 13px; }
+  .b-app { display: grid; grid-template-columns: var(--b-rail) minmax(0, 1fr) var(--b-money); grid-template-rows: auto minmax(0, 1fr) auto; height: calc(100% - var(--bar-h)); }
+  .b-top { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--card); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .b-top h1 { font-size: 14px; font-weight: 700; margin-right: 8px; white-space: nowrap; }
+  .b-cmd { flex: 1 1 320px; display: grid; gap: 3px; }
+  .b-cmd .input { font-family: var(--font-figures); min-height: 32px; padding: 4px 8px; }
+  .b-cmd-preview { font-size: 12px; color: var(--muted); min-height: 1.2em; font-family: var(--font-figures); }
+  .b-cmd-preview.bad { color: var(--danger); }
+  .b-cmd-preview.ok { color: var(--accent); }
+  .b-top .input.b-search { flex: 0 1 220px; min-height: 32px; padding: 4px 8px; }
+  .b-top .btn { min-height: 32px; padding: 0 10px; }
+  .b-rail { border-right: 1px solid var(--line); background: var(--card); padding: 12px; display: grid; gap: 16px; align-content: start; overflow: auto; }
+  .b-rail h2 { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+  .b-views { display: grid; gap: 2px; }
+  .b-view { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--radius); border: 0; background: transparent; text-align: left; width: 100%; cursor: pointer; }
+  .b-view:hover { background: var(--subtle); }
+  .b-view[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+  .b-view .num { color: var(--muted); font-size: 12px; }
+  .b-totals { display: grid; gap: 6px; }
+  .b-totals div { display: flex; justify-content: space-between; gap: 8px; }
+  .b-totals strong { font-family: var(--font-figures); font-weight: 500; }
+  .b-center { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; }
+  .b-table-wrap { overflow: auto; }
+  table.b-grid { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .b-grid th, .b-grid td { padding: 0 7px; height: 30px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; vertical-align: middle; }
+  .b-grid th { position: sticky; top: 0; background: var(--bg); font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); z-index: 1; }
+  .b-grid th button { all: unset; cursor: pointer; }
+  .b-grid th button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
+  .b-grid .r { text-align: right; }
+  .b-grid tbody tr { cursor: default; }
+  .b-grid tbody tr:hover { background: var(--subtle); }
+  .b-grid tbody tr[aria-selected="true"] { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+  .b-grid tbody tr.is-done td { color: var(--muted); }
+  .b-grid td.num, .b-grid td .num { font-family: var(--font-figures); font-variant-numeric: tabular-nums; }
+  .b-grid td .cell-input { width: 64px; min-height: 24px; padding: 2px 6px; font-family: var(--font-figures); text-align: right; border: 1px solid var(--accent); border-radius: 3px; background: var(--field); }
+  .b-grid td .cell-input[aria-invalid="true"] { border-color: var(--danger); box-shadow: 0 0 0 2px var(--danger-soft); }
+  .b-grid td .cell-select { min-height: 24px; padding: 2px 4px; border: 1px solid var(--line); border-radius: 3px; background: var(--field); font-size: 12px; }
+  .b-grid td .cell-text { min-height: 24px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 3px; background: var(--field); width: 140px; }
+  .b-grid td .cell-text.narrow { width: 64px; text-align: right; font-family: var(--font-figures); }
+  .b-grid .b-received button { all: unset; cursor: text; padding: 2px 6px; border-radius: 3px; border: 1px dashed transparent; font-family: var(--font-figures); }
+  .b-grid .b-received button:hover { border-color: var(--line); background: var(--field); }
+  .b-grid .b-received button:focus-visible { outline: 3px solid var(--focus); outline-offset: 1px; }
+  .b-grid .pill { font-size: 10px; padding: 1px 7px; }
+  .b-grid .b-rowtools .btn { min-height: 22px; padding: 0 6px; font-size: 11px; font-weight: 600; }
+  .b-status { grid-column: 1 / -1; display: flex; gap: 14px; align-items: center; padding: 5px 12px; border-top: 1px solid var(--line); background: var(--card); font-size: 12px; color: var(--muted); min-height: 30px; flex-wrap: wrap; }
+  .b-status .msg { flex: 1; color: var(--ink); }
+  .b-status .msg.bad { color: var(--danger); }
+  .b-status .msg.ok { color: var(--accent); }
+  .b-status kbd { font-family: var(--font-figures); background: var(--subtle); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; font-size: 11px; }
+  .b-money { border-left: 1px solid var(--line); background: var(--card); padding: 12px; display: grid; gap: 12px; align-content: start; overflow: auto; }
+  .b-money h2 { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .b-money .big { font-family: var(--font-figures); font-size: 22px; font-weight: 700; }
+  .b-money .rows { display: grid; gap: 4px; font-size: 12px; }
+  .b-money .rows div { display: flex; justify-content: space-between; gap: 8px; }
+  .b-bills { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 8px; align-items: center; font-size: 12px; }
+  .b-bills .input { min-height: 26px; padding: 2px 6px; text-align: right; font-family: var(--font-figures); width: 64px; justify-self: end; }
+  .b-bills .sub { font-family: var(--font-figures); color: var(--muted); text-align: right; }
+  .b-verdict { padding: 8px 10px; border-radius: var(--radius); background: var(--subtle); font-size: 12px; display: grid; gap: 3px; }
+  .b-verdict strong { font-size: 13px; }
+  .b-verdict.ok { background: var(--accent-soft); color: var(--accent); }
+  .b-verdict.bad { background: var(--danger-soft); color: var(--danger); }
+  .b-empty { padding: 40px 24px; text-align: center; color: var(--muted); display: grid; gap: 8px; justify-items: center; }
+  .b-empty strong { color: var(--ink); font-size: 15px; }
+  .b-tabs { display: none; grid-column: 1 / -1; gap: 4px; padding: 6px 12px; border-bottom: 1px solid var(--line); background: var(--card); }
+  .b-tabs button { flex: 1; min-height: 32px; border: 1px solid var(--line); background: var(--card); border-radius: var(--radius); font-weight: 600; cursor: pointer; }
+  .b-tabs button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  .b-skel td { height: 30px; } .b-skel .skeleton { height: 14px; }
+  .b-help dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 13px; margin: 0; }
+  .b-help dt { font-family: var(--font-figures); }
+  .b-help dd { margin: 0; color: var(--muted); }
+  @media (max-width: 1400px) { .b-opt { display: none; } }
+  @media (max-width: 960px) {
+    .b-status span:not(.msg), #b-help-btn { display: none; }
+    .b-app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; height: auto; min-height: calc(100% - var(--bar-h)); }
+    .b-tabs { display: flex; }
+    .b-rail, .b-money { border: 0; border-bottom: 1px solid var(--line); }
+    .b-app[data-pane="orders"] .b-rail, .b-app[data-pane="orders"] .b-money { display: none; }
+    .b-app[data-pane="views"] .b-center, .b-app[data-pane="views"] .b-money { display: none; }
+    .b-app[data-pane="money"] .b-center, .b-app[data-pane="money"] .b-rail { display: none; }
+    .b-opt { display: none; }
+    .b-top .input.b-search { flex-basis: 100%; }
+  }
+</style>
+
+<div class="b-app" id="b-app" data-pane="orders">
+  <header class="b-top">
+    <h1>Sales Tracker</h1>
+    <div class="b-cmd">
+      <label class="sr-only" for="b-cmd">Log an order: purchaser, quantity, product, paid by</label>
+      <input class="input" id="b-cmd" placeholder="Log: Jim Carter, 10, Honey, venmo  (product and paid-by optional)" autocomplete="off" spellcheck="false">
+      <div class="b-cmd-preview" id="b-cmd-preview" aria-live="polite">Type a purchaser, quantity, product and paid-by separated by commas, then press Enter.</div>
+    </div>
+    <input class="input b-search" id="b-search" type="search" placeholder="Search  /" aria-label="Search purchaser or product">
+    <button class="btn" type="button" id="b-help-btn" aria-haspopup="dialog">Keys <kbd style="font-family:var(--font-figures)">?</kbd></button>
+  </header>
+  <div class="b-tabs" role="tablist" aria-label="Panes">
+    <button role="tab" aria-selected="true" data-pane="orders" type="button">Orders</button>
+    <button role="tab" aria-selected="false" data-pane="views" type="button">Views</button>
+    <button role="tab" aria-selected="false" data-pane="money" type="button">Money</button>
+  </div>
+
+  <aside class="b-rail" aria-label="Views and totals">
+    <div><h2>View</h2><div class="b-views" id="b-status-views"></div></div>
+    <div><h2>By product</h2><div class="b-views" id="b-product-views"></div></div>
+    <div><h2>Totals</h2><div class="b-totals" id="b-totals"></div></div>
+    <div class="b-views">
+      <button class="btn btn-sm" type="button" id="b-settings-btn">Settings…</button>
+    </div>
+  </aside>
+
+  <section class="b-center" aria-label="Orders">
+    <div class="b-table-wrap" id="b-table-wrap">
+      <table class="b-grid" id="b-grid" aria-label="Orders" aria-rowcount="0">
+        <thead><tr>
+          <th class="b-opt r">#</th>
+          <th><button type="button" data-sort="purchaser">Purchaser</button></th>
+          <th><button type="button" data-sort="product">Product</button></th>
+          <th class="r"><button type="button" data-sort="ordered">Ordered</button></th>
+          <th class="r">Received</th>
+          <th class="r b-opt"><button type="button" data-sort="remaining">Left</button></th>
+          <th class="r"><button type="button" data-sort="uncollected">Owed</button></th>
+          <th>Status</th>
+          <th>Paid by</th>
+          <th class="b-opt"><button type="button" data-sort="created">Logged</button></th>
+          <th><span class="sr-only">Actions</span></th>
+        </tr></thead>
+        <tbody id="b-rows"></tbody>
+      </table>
+      <div id="b-empty" hidden></div>
+    </div>
+  </section>
+
+  <aside class="b-money" aria-label="Money">
+    <div><h2>Cash in drawer (expected)</h2><div class="big" id="b-m-expected">$0.00</div></div>
+    <div class="rows" id="b-m-rows"></div>
+    <div><h2>Bill count</h2><div class="b-bills" id="b-m-bills"></div></div>
+    <div class="b-verdict" id="b-m-verdict"><strong>Enter counts to compare.</strong></div>
+    <p class="hint">Cash only. Counts are never saved.</p>
+  </aside>
+
+  <footer class="b-status">
+    <span class="msg" id="b-msg" role="status" aria-live="polite">Ready.</span>
+    <span><kbd>↑</kbd><kbd>↓</kbd> row</span><span><kbd>+</kbd><kbd>−</kbd> hand over</span><span><kbd>Enter</kbd> type received</span><span><kbd>e</kbd> edit</span><span><kbd>n</kbd> log</span>
+  </footer>
+</div>
+
+<dialog id="b-help" aria-labelledby="b-help-h" class="b-help">
+  <div class="dlg-body">
+    <h2 id="b-help-h">Keyboard</h2>
+    <dl>
+      <dt>n</dt><dd>Jump to the log line</dd>
+      <dt>/</dt><dd>Jump to search</dd>
+      <dt>↑ ↓</dt><dd>Move the selected row</dd>
+      <dt>+ −</dt><dd>Hand over one more, or one fewer, on the selected row</dd>
+      <dt>a</dt><dd>Mark the selected row fully received</dd>
+      <dt>Enter</dt><dd>Type a received figure for the selected row</dd>
+      <dt>e</dt><dd>Edit the selected row inline (purchaser, product, quantity, paid by)</dd>
+      <dt>Esc</dt><dd>Cancel an edit</dd>
+      <dt>1 2 3</dt><dd>View all / outstanding / received</dd>
+    </dl>
+    <div class="dlg-actions"><button class="btn" type="button" data-close>Close</button></div>
+  </div>
+</dialog>
+
+<dialog id="b-settings" aria-labelledby="b-set-h">
+  <div class="dlg-body">
+    <h2 id="b-set-h">Settings</h2>
+    <form id="b-product-form" class="field" novalidate>
+      <label for="b-pf-name">Add a product</label>
+      <div style="display:grid;grid-template-columns:1fr 90px 100px;gap:6px">
+        <input class="input" id="b-pf-name" placeholder="Name" aria-label="Product name">
+        <input class="input" id="b-pf-unit" placeholder="Unit" aria-label="Unit" list="b-units">
+        <input class="input num" id="b-pf-price" placeholder="Price" aria-label="Price per unit" inputmode="decimal">
+      </div>
+      <datalist id="b-units"></datalist>
+      <div class="field-error" id="b-pf-error" role="alert"></div>
+      <div><button class="btn btn-sm" type="submit">Add product</button></div>
+    </form>
+    <div>
+      <p class="hint">Removing records happens only here. Type RESET to unlock. Nothing can be undone.</p>
+      <input class="input" id="b-set-unlock" aria-label="Type RESET to unlock" placeholder="Type RESET" style="margin-top:6px">
+    </div>
+    <div class="field"><label for="b-set-order">Delete one order</label>
+      <div style="display:flex;gap:6px;flex-wrap:wrap"><select class="select" id="b-set-order" style="flex:1"></select><button class="btn btn-danger" type="button" id="b-set-del-order">Delete</button></div></div>
+    <div class="field"><label for="b-set-product">Delete one product</label>
+      <div style="display:flex;gap:6px;flex-wrap:wrap"><select class="select" id="b-set-product" style="flex:1"></select><button class="btn btn-danger" type="button" id="b-set-del-product">Delete</button></div></div>
+    <div class="dlg-actions" style="justify-content:flex-start">
+      <button class="btn btn-danger" type="button" id="b-set-reset-orders">Reset all orders</button>
+      <button class="btn btn-danger" type="button" id="b-set-reset-all">Reset everything</button>
+    </div>
+    <div class="field-error" id="b-set-error" role="alert"></div>
+    <div class="dlg-actions"><button class="btn" type="button" data-close>Close</button></div>
+  </div>
+</dialog>
+
+<script src="fixture.js"></script>
+<script src="explore.js"></script>
+<script>
+(function () {
+  "use strict";
+  var store = ST.createStore();
+  explore(store);
+  var $ = function (s, root) { return (root || document).querySelector(s); };
+  var $$ = function (s, root) { return Array.prototype.slice.call((root || document).querySelectorAll(s)); };
+  var esc = ST.esc, money = ST.money, qty = ST.qty;
+
+  var ui = { status: "all", productId: null, sort: ["created", false], selected: null, editingCell: null, editingRow: null, cellError: "", rowError: "", loaded: false, search: "" };
+
+  function say(msg, kind) { var m = $("#b-msg"); m.textContent = msg; m.className = "msg " + (kind || ""); }
+
+  function visible() {
+    var rows = store.orders({ search: ui.search, status: ui.status, productId: ui.productId });
+    var key = ui.sort[0], rev = ui.sort[1];
+    rows.sort(function (a, b) {
+      var x = a[key], y = b[key];
+      if (typeof x === "string") { x = x.toLowerCase(); y = y.toLowerCase(); }
+      return (x < y ? -1 : x > y ? 1 : a.id - b.id) * (rev ? -1 : 1);
+    });
+    return rows;
+  }
+
+  function methodSelect(o) {
+    return '<select class="cell-select" data-method aria-label="Paid by for ' + esc(o.purchaser) + '">' + ST.METHODS.map(function (m) {
+      return '<option value="' + m + '"' + (m === o.method ? " selected" : "") + '>' + ST.cap(m) + '</option>';
+    }).join("") + '</select>';
+  }
+
+  function row(o) {
+    var sel = ui.selected === o.id;
+    if (ui.editingRow === o.id) {
+      var products = store.products();
+      return '<tr data-id="' + o.id + '" aria-selected="true" class="is-editing">' +
+        '<td class="b-opt r num">' + o.id + '</td>' +
+        '<td><input class="cell-text" data-e="purchaser" value="' + esc(o.purchaser) + '" aria-label="Purchaser"></td>' +
+        '<td><select class="cell-select" data-e="product" aria-label="Product">' + products.map(function (p) {
+          return '<option value="' + esc(p.name) + '"' + (p.id === o.productId ? " selected" : "") + '>' + esc(p.name) + '</option>';
+        }).join("") + '</select></td>' +
+        '<td class="r"><input class="cell-text narrow" data-e="qty" value="' + qty(o.ordered) + '" aria-label="Ordered" inputmode="decimal"></td>' +
+        '<td class="r num">' + qty(o.received) + '</td>' +
+        '<td class="r b-opt num">' + qty(o.remaining) + '</td>' +
+        '<td class="r num">' + money(o.uncollected) + '</td>' +
+        '<td><span class="pill pill-quiet">editing</span></td>' +
+        '<td><select class="cell-select" data-e="method" aria-label="Paid by">' + ST.METHODS.map(function (m) {
+          return '<option value="' + m + '"' + (m === o.method ? " selected" : "") + '>' + ST.cap(m) + '</option>';
+        }).join("") + '</select></td>' +
+        '<td class="b-opt">' + ST.when(o.created) + '</td>' +
+        '<td class="b-rowtools"><button class="btn btn-primary" type="button" data-act="save">Save</button> <button class="btn" type="button" data-act="cancel">Cancel</button></td></tr>';
+    }
+    var received = ui.editingCell === o.id ?
+      '<input class="cell-input" data-cell value="' + qty(o.received) + '" aria-label="Received so far, of ' + qty(o.ordered) + '" inputmode="decimal"' + (ui.cellError ? ' aria-invalid="true" aria-describedby="b-msg"' : "") + '>' :
+      '<button type="button" data-act="cell" aria-label="Received ' + qty(o.received) + ' of ' + qty(o.ordered) + ', press Enter to change">' + qty(o.received) + '</button>';
+    return '<tr data-id="' + o.id + '" aria-selected="' + sel + '" class="' + (o.fulfilled ? "is-done" : "") + '">' +
+      '<td class="b-opt r num">' + o.id + '</td>' +
+      '<td>' + esc(o.purchaser) + '</td>' +
+      '<td>' + esc(o.product) + '</td>' +
+      '<td class="r num">' + qty(o.ordered) + ' <span class="muted">' + esc(o.unit) + '</span></td>' +
+      '<td class="r b-received">' + received + '</td>' +
+      '<td class="r b-opt num">' + (o.fulfilled ? "—" : qty(o.remaining)) + '</td>' +
+      '<td class="r num">' + (o.fulfilled ? "—" : money(o.uncollected)) + '</td>' +
+      '<td><span class="pill ' + (o.fulfilled ? "pill-ok" : "pill-warn") + '">' + o.status + '</span></td>' +
+      '<td>' + methodSelect(o) + '</td>' +
+      '<td class="b-opt muted">' + ST.when(o.created) + '</td>' +
+      '<td class="b-rowtools"><button class="btn" type="button" data-act="all" aria-label="Mark all received for ' + esc(o.purchaser) + '"' + (o.fulfilled ? " disabled" : "") + '>All</button> <button class="btn" type="button" data-act="edit">Edit</button></td></tr>';
+  }
+
+  function render(focusSel) {
+    var products = store.products();
+    var rows = visible();
+    var s = store.summary(), f = store.financials();
+    if (ui.selected != null && !rows.some(function (r) { return r.id === ui.selected; })) ui.selected = rows.length ? rows[0].id : null;
+    if (ui.selected == null && rows.length) ui.selected = rows[0].id;
+    $("#b-rows").innerHTML = rows.map(row).join("");
+    $("#b-grid").setAttribute("aria-rowcount", rows.length + 1);
+    var empty = $("#b-empty");
+    if (!products.length) { empty.hidden = false; empty.innerHTML = '<div class="b-empty"><strong>Nothing to sell yet.</strong><span>Add a product in Settings, then log orders on the line above.</span><button class="btn btn-primary btn-sm" type="button" id="b-first">Open Settings</button></div>'; $("#b-first").addEventListener("click", openSettings); }
+    else if (!rows.length) { empty.hidden = false; empty.innerHTML = '<div class="b-empty"><strong>' + (ui.search || ui.status !== "all" || ui.productId ? "Nothing matches this view." : "No orders yet.") + '</strong><span>' + (ui.search || ui.status !== "all" || ui.productId ? "Clear the search or pick another view." : "Log one on the line above: name, quantity, product, paid by.") + '</span></div>'; }
+    else empty.hidden = true;
+    $("#b-cmd").disabled = !products.length;
+
+    $("#b-status-views").innerHTML = [["all", "All", s.count], ["outstanding", "Outstanding", s.outstanding], ["received", "Received", s.received]].map(function (v) {
+      return '<button class="b-view" type="button" data-status="' + v[0] + '" aria-pressed="' + (ui.status === v[0]) + '"><span>' + v[1] + '</span><span class="num">' + v[2] + '</span></button>';
+    }).join("");
+    $("#b-product-views").innerHTML = '<button class="b-view" type="button" data-product="" aria-pressed="' + (ui.productId == null) + '"><span>Every product</span></button>' + products.map(function (p) {
+      return '<button class="b-view" type="button" data-product="' + p.id + '" aria-pressed="' + (ui.productId === p.id) + '"><span>' + esc(p.name) + '</span><span class="num">' + store.ordersFor(p.id) + '</span></button>';
+    }).join("");
+    $("#b-totals").innerHTML = [["Orders", s.count], ["Units to hand out", qty(s.unitsDue)], ["Still owed", money(f.totalUncollected)], ["Cash collected", money(f.cashCollected)], ["Order value", money(s.revenue)]].map(function (t) {
+      return '<div><span class="muted">' + t[0] + '</span><strong>' + t[1] + '</strong></div>';
+    }).join("");
+    $$("th button[data-sort]").forEach(function (b) {
+      var base = b.textContent.replace(/[▲▼]\s*$/, "").trim();
+      b.textContent = base + (ui.sort[0] === b.dataset.sort ? (ui.sort[1] ? " ▼" : " ▲") : "");
+      b.setAttribute("aria-label", "Sort by " + base.toLowerCase());
+    });
+    renderMoney();
+    if (focusSel) { var el = $(focusSel); if (el) { el.focus(); if (el.select) el.select(); } }
+  }
+
+  function showLoading() {
+    $("#b-rows").innerHTML = [1, 2, 3, 4, 5, 6].map(function () { return '<tr class="b-skel"><td colspan="11"><div class="skeleton"></div></td></tr>'; }).join("");
+  }
+
+  // Command line
+  function parseCmd(text) {
+    var parts = text.split(",").map(function (s) { return s.trim(); });
+    if (parts.length < 2 || !parts[0] || !parts[1]) return { error: "Need at least a purchaser and a quantity, separated by a comma." };
+    return { purchaser: parts[0], qty: parts[1], product: parts[2] || "", method: parts[3] || "cash" };
+  }
+  function preview() {
+    var p = $("#b-cmd-preview"), text = $("#b-cmd").value.trim();
+    if (!text) { p.className = "b-cmd-preview"; p.textContent = "Type a purchaser, quantity, product and paid-by separated by commas, then press Enter."; return; }
+    var c = parseCmd(text);
+    if (c.error) { p.className = "b-cmd-preview"; p.textContent = c.error; return; }
+    var products = store.products();
+    var prod = null;
+    try { prod = c.product ? store.findProduct(c.product) : (products.length === 1 ? products[0] : null); } catch (e) { p.className = "b-cmd-preview bad"; p.textContent = e.message; return; }
+    var q; try { q = ST.parseQuantity(c.qty); } catch (e) { p.className = "b-cmd-preview bad"; p.textContent = e.message; return; }
+    var m; try { m = ST.parseMethod(c.method); } catch (e) { p.className = "b-cmd-preview bad"; p.textContent = e.message; return; }
+    if (!prod) { p.className = "b-cmd-preview bad"; p.textContent = "Choose which product: " + products.map(function (x) { return x.name; }).join(", "); return; }
+    p.className = "b-cmd-preview ok";
+    p.textContent = "→ " + c.purchaser + " · " + qty(q) + " " + prod.unit + " " + prod.name + " · " + ST.cap(m) + " · " + money(q * prod.price) + "   Enter to log";
+  }
+  $("#b-cmd").addEventListener("input", preview);
+  $("#b-cmd").addEventListener("keydown", function (e) {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    var c = parseCmd($("#b-cmd").value);
+    if (c.error) { say(c.error, "bad"); return; }
+    var r = store.attempt(function () { return store.addOrder(c); });
+    if (!r.ok) { say(r.error, "bad"); $("#b-cmd-preview").className = "b-cmd-preview bad"; $("#b-cmd-preview").textContent = r.error; return; }
+    $("#b-cmd").value = ""; preview();
+    ui.selected = r.value.id; ui.status = "all"; ui.productId = null; ui.search = ""; $("#b-search").value = "";
+    say("Logged #" + r.value.id + " " + r.value.purchaser + " · " + qty(r.value.ordered) + " " + r.value.unit + " " + r.value.product + " · " + ST.cap(r.value.method), "ok");
+    render();
+    $('[data-id="' + r.value.id + '"]').scrollIntoView({ block: "nearest" });
+  });
+  $("#b-search").addEventListener("input", function () { ui.search = this.value; render(); });
+
+  // Rail
+  $("#b-status-views").addEventListener("click", function (e) { var b = e.target.closest("[data-status]"); if (b) { ui.status = b.dataset.status; render(); } });
+  $("#b-product-views").addEventListener("click", function (e) { var b = e.target.closest("[data-product]"); if (b) { ui.productId = b.dataset.product ? Number(b.dataset.product) : null; render(); } });
+  $("#b-grid").addEventListener("click", function (e) {
+    var sortBtn = e.target.closest("[data-sort]");
+    if (sortBtn) { ui.sort = ui.sort[0] === sortBtn.dataset.sort ? [ui.sort[0], !ui.sort[1]] : [sortBtn.dataset.sort, false]; render(); return; }
+    var tr = e.target.closest("tr[data-id]"); if (!tr) return;
+    var id = Number(tr.dataset.id);
+    var act = e.target.closest("[data-act]");
+    if (ui.editingRow != null && ui.editingRow !== id && !act) return;
+    if (ui.selected !== id && ui.editingRow == null) { ui.selected = id; render(); }
+    if (!act) return;
+    if (act.dataset.act === "cell") { beginCell(id); }
+    else if (act.dataset.act === "all") { commit(function () { return store.markReceived(id); }, function (o) { return o.purchaser + " marked fully received."; }); }
+    else if (act.dataset.act === "edit") { ui.editingRow = id; ui.selected = id; render('[data-id="' + id + '"] [data-e="purchaser"]'); }
+    else if (act.dataset.act === "cancel") { ui.editingRow = null; render('[data-id="' + id + '"] [data-act="edit"]'); say("Edit cancelled."); }
+    else if (act.dataset.act === "save") { saveRow(id); }
+  });
+  $("#b-grid").addEventListener("change", function (e) {
+    var sel = e.target.closest("[data-method]"); if (!sel) return;
+    var id = Number(sel.closest("tr").dataset.id);
+    commit(function () { return store.setMethod(id, sel.value); }, function (o) { return o.purchaser + " now paid by " + ST.cap(o.method) + "."; }, '[data-id="' + id + '"] [data-method]');
+  });
+  function commit(fn, done, focusSel) {
+    var r = store.attempt(fn);
+    if (!r.ok) { say(r.error, "bad"); return false; }
+    say(done(r.value), "ok");
+    render(focusSel);
+    return true;
+  }
+  function beginCell(id) {
+    ui.editingCell = id; ui.cellError = ""; ui.selected = id;
+    render('[data-id="' + id + '"] [data-cell]');
+  }
+  function saveRow(id) {
+    var tr = $('[data-id="' + id + '"]');
+    var fields = { purchaser: $('[data-e="purchaser"]', tr).value, product: $('[data-e="product"]', tr).value, qty: $('[data-e="qty"]', tr).value, method: $('[data-e="method"]', tr).value };
+    var r = store.attempt(function () { return store.editOrder(id, fields); });
+    if (!r.ok) { say(r.error, "bad"); $('[data-e="' + (/purchaser/.test(r.error) ? "purchaser" : "qty") + '"]', tr).focus(); return; }
+    ui.editingRow = null;
+    say("Updated #" + id + " " + r.value.purchaser + ".", "ok");
+    render('[data-id="' + id + '"] [data-act="edit"]');
+  }
+  $("#b-grid").addEventListener("keydown", function (e) {
+    var cell = e.target.closest("[data-cell]");
+    if (cell) {
+      var id = Number(cell.closest("tr").dataset.id);
+      if (e.key === "Escape") { ui.editingCell = null; ui.cellError = ""; render('[data-id="' + id + '"] [data-act="cell"]'); say("Cancelled."); e.preventDefault(); return; }
+      if (e.key === "Enter" || e.key === "Tab") {
+        var r = store.attempt(function () { return store.setReceived(id, cell.value); });
+        if (!r.ok) { ui.cellError = r.error; say(r.error, "bad"); cell.setAttribute("aria-invalid", "true"); e.preventDefault(); cell.select(); return; }
+        ui.editingCell = null; ui.cellError = "";
+        say(r.value.purchaser + ": " + qty(r.value.received) + " of " + qty(r.value.ordered) + " received.", "ok");
+        e.preventDefault();
+        render('[data-id="' + id + '"] [data-act="cell"]');
+      }
+      return;
+    }
+    if (ui.editingRow != null) {
+      if (e.key === "Escape") { var rid = ui.editingRow; ui.editingRow = null; render('[data-id="' + rid + '"] [data-act="edit"]'); say("Edit cancelled."); }
+      if (e.key === "Enter" && e.target.closest("[data-e]")) { e.preventDefault(); saveRow(ui.editingRow); }
+      return;
+    }
+  });
+  document.addEventListener("keydown", function (e) {
+    var typing = /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName) || e.target.isContentEditable;
+    if (typing) {
+      if (e.key === "Escape" && e.target.id === "b-search") { e.target.value = ""; ui.search = ""; render(); }
+      return;
+    }
+    if (document.querySelector("dialog[open]")) return;
+    var rows = visible();
+    var idx = rows.findIndex(function (r) { return r.id === ui.selected; });
+    switch (e.key) {
+      case "n": $("#b-cmd").focus(); e.preventDefault(); break;
+      case "/": $("#b-search").focus(); e.preventDefault(); break;
+      case "?": $("#b-help").showModal(); e.preventDefault(); break;
+      case "1": ui.status = "all"; render(); break;
+      case "2": ui.status = "outstanding"; render(); break;
+      case "3": ui.status = "received"; render(); break;
+      case "ArrowDown": if (idx < rows.length - 1) { ui.selected = rows[idx + 1].id; render(); scrollSel(); } e.preventDefault(); break;
+      case "ArrowUp": if (idx > 0) { ui.selected = rows[idx - 1].id; render(); scrollSel(); } e.preventDefault(); break;
+      case "+": case "=": if (idx >= 0) { var o = rows[idx]; commit(function () { return store.setReceived(o.id, Math.min(o.ordered, o.received + 1)); }, function (v) { return v.purchaser + ": " + qty(v.received) + " of " + qty(v.ordered) + "."; }); } e.preventDefault(); break;
+      case "-": if (idx >= 0) { var o2 = rows[idx]; commit(function () { return store.setReceived(o2.id, Math.max(0, o2.received - 1)); }, function (v) { return v.purchaser + ": " + qty(v.received) + " of " + qty(v.ordered) + "."; }); } e.preventDefault(); break;
+      case "a": if (idx >= 0) { var o3 = rows[idx]; commit(function () { return store.markReceived(o3.id); }, function (v) { return v.purchaser + " marked fully received."; }); } break;
+      case "Enter": if (idx >= 0) { beginCell(rows[idx].id); e.preventDefault(); } break;
+      case "e": if (idx >= 0) { ui.editingRow = rows[idx].id; render('[data-id="' + rows[idx].id + '"] [data-e="purchaser"]'); e.preventDefault(); } break;
+    }
+  });
+  function scrollSel() { var tr = $('tr[aria-selected="true"]'); if (tr) tr.scrollIntoView({ block: "nearest" }); }
+
+  // Money rail
+  $("#b-m-bills").innerHTML = ST.DENOMINATIONS.map(function (d) {
+    return '<label for="b-bill-' + d + '" class="num">$' + d + '</label><input class="input" id="b-bill-' + d + '" data-bill="' + d + '" inputmode="numeric" placeholder="0"><span class="sub" data-sub="' + d + '">$0.00</span>';
+  }).join("");
+  function renderMoney() {
+    var f = store.financials();
+    $("#b-m-expected").textContent = money(f.cashCollected);
+    $("#b-m-rows").innerHTML = [["Cash still to collect", f.cashUncollected], ["Venmo / other collected", f.otherCollected], ["Venmo / other to collect", f.otherUncollected], ["Total collected", f.totalCollected], ["Full order value", f.bookValue]].map(function (r) {
+      return '<div><span class="muted">' + r[0] + '</span><span class="num">' + money(r[1]) + '</span></div>';
+    }).join("");
+    recount();
+  }
+  function recount() {
+    var counts = {}, any = false;
+    $$("[data-bill]").forEach(function (i) { counts[i.dataset.bill] = i.value; if (i.value.trim()) any = true; var n = Number(i.value); $('[data-sub="' + i.dataset.bill + '"]').textContent = money(isFinite(n) && n === Math.floor(n) && n >= 0 ? n * Number(i.dataset.bill) : 0); });
+    var v = $("#b-m-verdict");
+    if (!any) { v.className = "b-verdict"; v.innerHTML = "<strong>Enter counts to compare.</strong>"; return; }
+    var r = store.attempt(function () { return store.reconcile(counts); });
+    if (!r.ok) { v.className = "b-verdict bad"; v.innerHTML = "<strong>" + esc(r.error) + "</strong>"; return; }
+    v.className = "b-verdict " + (r.value.balanced ? "ok" : "bad");
+    v.innerHTML = "<strong>" + esc(r.value.headline) + "</strong><span>Counted " + money(r.value.counted) + " · expected " + money(r.value.expected) + "</span>" + (r.value.note ? "<span>" + esc(r.value.note) + "</span>" : "");
+  }
+  $("#b-m-bills").addEventListener("input", recount);
+
+  // Tabs (narrow screens)
+  $$(".b-tabs [role=tab]").forEach(function (t) {
+    t.addEventListener("click", function () {
+      $("#b-app").dataset.pane = t.dataset.pane;
+      $$(".b-tabs [role=tab]").forEach(function (x) { x.setAttribute("aria-selected", x === t); });
+    });
+  });
+
+  // Dialogs
+  $$("dialog").forEach(function (dlg) { $$("[data-close]", dlg).forEach(function (b) { b.addEventListener("click", function () { dlg.close(); }); }); });
+  $("#b-help-btn").addEventListener("click", function () { $("#b-help").showModal(); });
+  function renderSettings() {
+    $("#b-units").innerHTML = ST.UNITS.map(function (u) { return '<option value="' + u + '">'; }).join("");
+    $("#b-set-order").innerHTML = store.orders().map(function (o) { return '<option value="' + o.id + '">#' + o.id + ' ' + esc(o.purchaser) + ' · ' + esc(o.product) + '</option>'; }).join("") || '<option value="">No orders</option>';
+    $("#b-set-product").innerHTML = store.products().map(function (p) { return '<option value="' + p.id + '">' + esc(p.name) + ' (' + store.ordersFor(p.id) + ' orders)</option>'; }).join("") || '<option value="">No products</option>';
+  }
+  function openSettings() { renderSettings(); $("#b-set-error").textContent = ""; $("#b-pf-error").textContent = ""; $("#b-settings").showModal(); $("#b-pf-name").focus(); }
+  $("#b-settings-btn").addEventListener("click", openSettings);
+  $("#b-product-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var r = store.attempt(function () { return store.addProduct({ name: $("#b-pf-name").value, unit: $("#b-pf-unit").value, price: $("#b-pf-price").value }); });
+    if (!r.ok) { $("#b-pf-error").textContent = r.error; $("#b-pf-name").focus(); return; }
+    $("#b-pf-name").value = ""; $("#b-pf-unit").value = ""; $("#b-pf-price").value = ""; $("#b-pf-error").textContent = "";
+    renderSettings(); say("Added " + r.value.name + ".", "ok");
+  });
+  function gated(fn, done) {
+    if ($("#b-set-unlock").value.trim() !== "RESET") { $("#b-set-error").textContent = "Type RESET in the unlock box first so this cannot happen by accident."; $("#b-set-unlock").focus(); return; }
+    var r = store.attempt(fn);
+    if (!r.ok) { $("#b-set-error").textContent = r.error; return; }
+    $("#b-set-error").textContent = ""; renderSettings(); say(done(r.value), "ok");
+  }
+  $("#b-set-del-order").addEventListener("click", function () { var id = $("#b-set-order").value; if (id) gated(function () { return store.deleteOrder(id); }, function (o) { return "Deleted #" + o.id + " " + o.purchaser + "."; }); });
+  $("#b-set-del-product").addEventListener("click", function () { var id = $("#b-set-product").value; if (id) gated(function () { return store.deleteProduct(id); }, function (p) { return "Deleted " + p.name + "."; }); });
+  $("#b-set-reset-orders").addEventListener("click", function () { gated(function () { return store.resetOrders(); }, function (n) { return "Cleared " + n + " order(s)."; }); });
+  $("#b-set-reset-all").addEventListener("click", function () { gated(function () { store.resetAll(); }, function () { return "Products and orders were cleared."; }); });
+
+  store.subscribe(function () { if (ui.loaded) render(); });
+  ST.boot(showLoading, function () { ui.loaded = true; render(); say("Ready. Press ? for keys."); });
+})();
+</script>

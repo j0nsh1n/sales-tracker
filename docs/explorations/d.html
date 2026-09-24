@@ -1,0 +1,383 @@
+<meta charset="utf-8">
+<title>Tally</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap">
+<link rel="stylesheet" href="shared.css">
+<style>
+  /* Direction D — Tally. A board by product; each order is a strip of pips punched as items go out. */
+  :root { --radius: 8px; }
+  body { font-size: 14px; }
+  .d-app { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: calc(100% - var(--bar-h)); }
+  .d-app > * { min-width: 0; }
+  .d-main { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
+  .d-board { max-width: 100%; }
+  .d-top { display: flex; align-items: center; gap: 10px; padding: 10px 16px; flex-wrap: wrap; border-bottom: 1px solid var(--line); background: var(--card); }
+  .d-top h1 { font-size: 16px; font-weight: 800; margin-right: 6px; }
+  .d-chips { display: flex; gap: 6px; }
+  .d-chip { min-height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); cursor: pointer; font-weight: 600; font-size: 13px; }
+  .d-chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .d-top .input { flex: 1 1 180px; min-height: 34px; padding: 4px 10px; max-width: 320px; }
+  .d-top .btn { min-height: 34px; }
+  .d-tabs { display: none; gap: 6px; padding: 8px 16px 0; overflow-x: auto; }
+  .d-board { display: flex; gap: 16px; padding: 16px; overflow: auto; align-items: flex-start; scroll-snap-type: x mandatory; }
+  .d-col { flex: 1 1 0; min-width: 300px; max-width: 460px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 0; scroll-snap-align: start; }
+  .d-col-head { padding: 14px 16px 12px; border-bottom: 1px solid var(--line); display: grid; gap: 6px; }
+  .d-col-head h2 { font-size: 17px; font-weight: 800; display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+  .d-col-head h2 small { font-family: var(--font-figures); font-weight: 500; font-size: 13px; color: var(--muted); }
+  .d-col-head .d-stat { display: flex; gap: 14px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+  .d-col-head .d-stat b { color: var(--ink); font-family: var(--font-figures); font-weight: 500; }
+  .d-col-body { padding: 10px 12px 12px; display: grid; gap: 8px; }
+  .d-slip { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 8px; background: var(--bg); transition: box-shadow .2s; }
+  .d-slip.is-done { opacity: 0.72; }
+  .d-slip.is-new { box-shadow: 0 0 0 3px var(--accent-soft); }
+  .d-slip.is-hit { box-shadow: 0 0 0 3px var(--warn-soft); }
+  .d-slip-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .d-name { all: unset; cursor: pointer; font-weight: 700; font-size: 15px; border-bottom: 1px dashed transparent; }
+  .d-name:hover { border-bottom-color: var(--muted); }
+  .d-name:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
+  .d-slip-head .cell-select { min-height: 26px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 999px; background: var(--card); font-size: 12px; font-weight: 600; }
+  .d-pips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .d-pip { width: 26px; height: 26px; border-radius: 6px; border: 2px solid var(--line); background: var(--card); cursor: pointer; padding: 0; position: relative; }
+  .d-pip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); }
+  .d-pip[aria-pressed="true"]::after { content: ""; position: absolute; inset: 7px; border-radius: 2px; background: var(--accent-ink); opacity: 0.9; }
+  .d-pip:hover { border-color: var(--accent); }
+  .d-pip:focus-visible { outline-offset: 1px; }
+  .d-slip-foot { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); align-items: center; }
+  .d-slip-foot b { color: var(--ink); font-family: var(--font-figures); font-weight: 500; }
+  .d-stepper { display: flex; gap: 6px; align-items: center; }
+  .d-stepper .btn { min-height: 30px; min-width: 34px; padding: 0; }
+  .d-stepper .input { width: 70px; min-height: 30px; padding: 2px 6px; text-align: center; font-family: var(--font-figures); }
+  .d-add { padding: 0 12px 12px; }
+  .d-add > .btn { width: 100%; border-style: dashed; }
+  .d-add form { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+  .d-add form .row { display: grid; grid-template-columns: 1fr 72px; gap: 8px; }
+  .d-add form .input { min-height: 36px; }
+  .d-add .d-chips { flex-wrap: wrap; }
+  .d-add .actions { display: flex; gap: 6px; justify-content: flex-end; }
+  .d-empty-col { padding: 22px 12px; text-align: center; color: var(--muted); font-size: 13px; }
+  .d-hero { margin: 40px auto; max-width: 520px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 32px; display: grid; gap: 12px; text-align: center; justify-items: center; }
+  .d-hero h2 { font-size: 22px; }
+  .d-hero p { color: var(--muted); }
+  .d-drawer { border-top: 1px solid var(--line); background: var(--card); }
+  .d-drawer summary { list-style: none; cursor: pointer; padding: 10px 16px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; font-weight: 600; }
+  .d-drawer summary::-webkit-details-marker { display: none; }
+  .d-drawer summary .num { font-family: var(--font-figures); font-weight: 700; }
+  .d-drawer summary .d-arrow { margin-left: auto; color: var(--muted); font-weight: 400; }
+  .d-drawer[open] summary .d-arrow::before { content: "Hide"; } .d-drawer:not([open]) summary .d-arrow::before { content: "Count ▸"; }
+  .d-drawer-body { padding: 4px 16px 16px; display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: start; }
+  .d-tiles { display: flex; gap: 8px; flex-wrap: wrap; }
+  .d-tile { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: grid; gap: 4px; min-width: 96px; background: var(--bg); }
+  .d-tile .den { font-family: var(--font-figures); font-weight: 700; }
+  .d-tile .ctl { display: flex; align-items: center; gap: 4px; }
+  .d-tile .ctl .btn { min-height: 28px; min-width: 30px; padding: 0; }
+  .d-tile .ctl .input { width: 48px; min-height: 28px; padding: 2px; text-align: center; font-family: var(--font-figures); }
+  .d-tile .sub { font-size: 11px; color: var(--muted); font-family: var(--font-figures); }
+  .d-verdict { min-width: 260px; padding: 10px 12px; border-radius: 8px; background: var(--subtle); display: grid; gap: 4px; font-size: 13px; }
+  .d-verdict strong { font-size: 15px; }
+  .d-verdict.ok { background: var(--accent-soft); color: var(--accent); }
+  .d-verdict.bad { background: var(--danger-soft); color: var(--danger); }
+  .d-skel { display: flex; gap: 16px; padding: 16px; } .d-skel .skeleton { flex: 1; height: 320px; border-radius: 12px; }
+  mark { background: var(--warn-soft); color: inherit; border-radius: 2px; }
+  @media (max-width: 760px) {
+    .d-app { height: auto; min-height: calc(100% - var(--bar-h)); }
+    .d-tabs { display: flex; }
+    .d-board { padding: 12px 16px 16px; gap: 12px; }
+    .d-col { min-width: 86vw; max-width: 86vw; }
+    .d-drawer-body { grid-template-columns: 1fr; }
+    .d-verdict { min-width: 0; }
+  }
+</style>
+
+<div class="d-app">
+  <header class="d-top">
+    <h1>Sales Tracker</h1>
+    <div class="d-chips" role="group" aria-label="Show">
+      <button class="d-chip" type="button" data-show="all" aria-pressed="true">All slips</button>
+      <button class="d-chip" type="button" data-show="outstanding" aria-pressed="false">Waiting</button>
+      <button class="d-chip" type="button" data-show="received" aria-pressed="false">Done</button>
+    </div>
+    <input class="input" id="d-search" type="search" aria-label="Find a purchaser" placeholder="Find a purchaser">
+    <button class="btn" type="button" id="d-settings-btn">Settings</button>
+  </header>
+  <div class="d-main">
+    <div class="d-tabs" id="d-tabs" role="group" aria-label="Jump to product"></div>
+    <div class="d-board" id="d-board" aria-live="polite" aria-busy="true"></div>
+  </div>
+  <details class="d-drawer" id="d-drawer">
+    <summary><span>Drawer</span><span>Expects <span class="num" id="d-m-expected">$0.00</span> in cash</span><span>Counted <span class="num" id="d-m-counted">$0.00</span></span><span class="d-arrow"></span></summary>
+    <div class="d-drawer-body">
+      <div>
+        <div class="d-tiles" id="d-tiles"></div>
+        <p class="hint" style="margin-top:8px">Tap + for each bill as you count it. Cash only; Venmo and other never reach the drawer. Counts are not saved.</p>
+      </div>
+      <div class="d-verdict" id="d-verdict"><strong>Count the bills to compare.</strong></div>
+    </div>
+  </details>
+</div>
+
+<dialog id="d-edit" aria-labelledby="d-edit-h">
+  <form class="dlg-body" id="d-edit-form" novalidate>
+    <h2 id="d-edit-h">Edit slip</h2>
+    <p class="hint" id="d-edit-hint"></p>
+    <div class="field"><label for="d-ef-purchaser">Purchaser</label><input class="input" id="d-ef-purchaser"></div>
+    <div class="field"><label for="d-ef-product">Product (moves the slip to that column)</label><select class="select" id="d-ef-product"></select></div>
+    <div class="field"><label for="d-ef-qty">How many ordered</label><input class="input num" id="d-ef-qty" inputmode="decimal" style="max-width:140px"></div>
+    <div class="field-error" id="d-ef-error" role="alert"></div>
+    <div class="dlg-actions"><button class="btn" type="button" data-close>Cancel</button><button class="btn btn-primary" type="submit">Save</button></div>
+  </form>
+</dialog>
+
+<dialog id="d-settings" aria-labelledby="d-set-h">
+  <div class="dlg-body">
+    <h2 id="d-set-h">Settings</h2>
+    <form id="d-product-form" class="field" novalidate>
+      <label for="d-pf-name">Add a product (a new column)</label>
+      <div style="display:grid;grid-template-columns:1fr 90px 100px;gap:6px">
+        <input class="input" id="d-pf-name" placeholder="Name" aria-label="Product name">
+        <input class="input" id="d-pf-unit" placeholder="Unit" aria-label="Unit" list="d-units">
+        <input class="input num" id="d-pf-price" placeholder="Price" aria-label="Price per unit" inputmode="decimal">
+      </div>
+      <datalist id="d-units"></datalist>
+      <div class="field-error" id="d-pf-error" role="alert"></div>
+      <div><button class="btn" type="submit">Add product</button></div>
+    </form>
+    <div><p class="hint">Removing records happens only here. Type RESET to unlock. Nothing can be undone.</p>
+      <input class="input" id="d-set-unlock" aria-label="Type RESET to unlock" placeholder="Type RESET" style="margin-top:6px"></div>
+    <div class="field"><label for="d-set-order">Delete one slip</label><div style="display:flex;gap:6px;flex-wrap:wrap"><select class="select" id="d-set-order" style="flex:1"></select><button class="btn btn-danger" type="button" id="d-set-del-order">Delete</button></div></div>
+    <div class="field"><label for="d-set-product">Delete one product</label><div style="display:flex;gap:6px;flex-wrap:wrap"><select class="select" id="d-set-product" style="flex:1"></select><button class="btn btn-danger" type="button" id="d-set-del-product">Delete</button></div></div>
+    <div class="dlg-actions" style="justify-content:flex-start"><button class="btn btn-danger" type="button" id="d-set-reset-orders">Reset all slips</button><button class="btn btn-danger" type="button" id="d-set-reset-all">Reset everything</button></div>
+    <div class="field-error" id="d-set-error" role="alert"></div>
+    <div class="dlg-actions"><button class="btn" type="button" data-close>Close</button></div>
+  </div>
+</dialog>
+
+<div class="toast" id="d-toast" hidden role="status" aria-live="polite"></div>
+
+<script src="fixture.js"></script>
+<script src="explore.js"></script>
+<script>
+(function () {
+  "use strict";
+  var store = ST.createStore();
+  explore(store);
+  var $ = function (s, root) { return (root || document).querySelector(s); };
+  var $$ = function (s, root) { return Array.prototype.slice.call((root || document).querySelectorAll(s)); };
+  var esc = ST.esc, money = ST.money, qty = ST.qty;
+  var PIP_LIMIT = 24;
+  var ui = { show: "all", search: "", adding: {}, addErr: {}, newest: null, hit: null, loaded: false, counts: {} };
+  var toastTimer, undo = null;
+
+  function toast(msg, undoFn) {
+    var t = $("#d-toast");
+    t.innerHTML = esc(msg) + (undoFn ? ' <button class="btn" type="button" id="d-undo">Undo</button>' : "");
+    t.hidden = false; undo = undoFn || null;
+    if (undoFn) $("#d-undo").addEventListener("click", function () { undo(); t.hidden = true; undo = null; });
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.hidden = true; undo = null; }, 5000);
+  }
+  function hl(text) {
+    if (!ui.search) return esc(text);
+    var i = text.toLowerCase().indexOf(ui.search.toLowerCase());
+    if (i < 0) return esc(text);
+    return esc(text.slice(0, i)) + "<mark>" + esc(text.slice(i, i + ui.search.length)) + "</mark>" + esc(text.slice(i + ui.search.length));
+  }
+  function usesPips(o) { return o.ordered <= PIP_LIMIT && o.ordered === Math.floor(o.ordered) && o.received === Math.floor(o.received); }
+
+  function slip(o) {
+    var body;
+    if (usesPips(o)) {
+      var pips = "";
+      for (var i = 1; i <= o.ordered; i++) {
+        var on = i <= o.received;
+        var label = on ? (i === o.received ? "Take back one (to " + (i - 1) + ")" : "Set handed over to " + i) : "Hand over up to " + i;
+        pips += '<button class="d-pip" type="button" data-pip="' + i + '" aria-pressed="' + on + '" aria-label="' + label + '"></button>';
+      }
+      body = '<div class="d-pips" role="group" aria-label="' + esc(o.purchaser) + ': ' + qty(o.received) + ' of ' + qty(o.ordered) + ' handed over">' + pips + '</div>';
+    } else {
+      body = '<div class="d-stepper" role="group" aria-label="Handed over"><button class="btn" type="button" data-step="-1" aria-label="One fewer"' + (o.received <= 0 ? " disabled" : "") + '>−</button>' +
+        '<input class="input" data-typed aria-label="Received so far" inputmode="decimal" value="' + qty(o.received) + '">' +
+        '<button class="btn" type="button" data-step="1" aria-label="One more"' + (o.fulfilled ? " disabled" : "") + '>+</button>' +
+        '<span class="hint">of ' + qty(o.ordered) + ' · too many for pips</span></div>';
+    }
+    return '<li class="d-slip' + (o.fulfilled ? " is-done" : "") + (ui.newest === o.id ? " is-new" : "") + (ui.hit === o.id ? " is-hit" : "") + '" data-id="' + o.id + '">' +
+      '<div class="d-slip-head"><button class="d-name" type="button" data-edit aria-label="Edit ' + esc(o.purchaser) + '’s slip">' + hl(o.purchaser) + '</button>' +
+      '<select class="cell-select" data-method aria-label="Paid by for ' + esc(o.purchaser) + '">' + ST.METHODS.map(function (m) { return '<option value="' + m + '"' + (m === o.method ? " selected" : "") + '>' + ST.cap(m) + '</option>'; }).join("") + '</select></div>' +
+      body +
+      '<div class="d-slip-foot"><span><b>' + qty(o.received) + '</b> of <b>' + qty(o.ordered) + '</b>' + (o.unit === "each" ? "" : " " + esc(o.unit)) + (o.fulfilled ? ' · done' : ' · <b>' + money(o.uncollected) + '</b> owed') + '</span><span>' + ST.when(o.created) + '</span></div>' +
+      (o.fulfilled ? "" : "") + '</li>';
+  }
+
+  function addForm(p) {
+    var err = ui.addErr[p.id] || "";
+    if (!ui.adding[p.id]) return '<div class="d-add"><button class="btn" type="button" data-add="' + p.id + '">+ New slip for ' + esc(p.name) + '</button></div>';
+    return '<div class="d-add"><form data-add-form="' + p.id + '" novalidate>' +
+      '<div class="row"><input class="input" data-f="purchaser" aria-label="Purchaser" placeholder="Who bought?" list="d-purchasers" autocomplete="off"><input class="input num" data-f="qty" aria-label="How many ' + esc(p.unit) + '" placeholder="' + esc(p.unit) + '" inputmode="decimal"></div>' +
+      '<div class="d-chips" role="radiogroup" aria-label="Paid by">' + ST.METHODS.map(function (m, i) { return '<button class="d-chip" type="button" role="radio" data-m="' + m + '" aria-checked="' + (i === 0) + '">' + ST.cap(m) + '</button>'; }).join("") + '</div>' +
+      '<div class="field-error" role="alert">' + esc(err) + '</div>' +
+      '<div class="actions"><button class="btn btn-sm" type="button" data-add-cancel="' + p.id + '">Cancel</button><button class="btn btn-primary btn-sm" type="submit">Add slip</button></div></form></div>';
+  }
+
+  function column(p) {
+    var all = store.orders({ productId: p.id });
+    var rows = store.orders({ productId: p.id, status: ui.show, search: ui.search });
+    var ordered = 0, received = 0, owed = 0, waiting = 0;
+    all.forEach(function (o) { ordered += o.ordered; received += o.received; owed += o.uncollected; if (!o.fulfilled) waiting++; });
+    return '<section class="d-col" data-col="' + p.id + '" aria-labelledby="d-col-h-' + p.id + '">' +
+      '<div class="d-col-head"><h2 id="d-col-h-' + p.id + '">' + esc(p.name) + '<small>' + money(p.price) + ' / ' + esc(p.unit) + '</small></h2>' +
+      '<div class="bar" aria-hidden="true"><i style="width:' + (ordered ? Math.round(received / ordered * 100) : 0) + '%"></i></div>' +
+      '<div class="d-stat"><span><b>' + qty(received) + '</b> of <b>' + qty(ordered) + '</b> out</span><span><b>' + waiting + '</b> waiting</span><span><b>' + money(owed) + '</b> owed</span></div></div>' +
+      '<ul class="d-col-body">' + (rows.length ? rows.map(slip).join("") :
+        '<li class="d-empty-col">' + (all.length ? "No " + (ui.show === "received" ? "finished" : ui.show === "outstanding" ? "waiting" : "matching") + " slips here." : "No slips yet. Add the first sale of " + esc(p.name) + " below.") + '</li>') + '</ul>' +
+      addForm(p) + '</section>';
+  }
+
+  function render(focusSel) {
+    var products = store.products();
+    var board = $("#d-board");
+    board.setAttribute("aria-busy", "false");
+    $("#d-purchasers") || document.body.insertAdjacentHTML("beforeend", '<datalist id="d-purchasers"></datalist>');
+    $("#d-purchasers").innerHTML = store.purchasers().map(function (n) { return '<option value="' + esc(n) + '">'; }).join("");
+    if (!products.length) {
+      board.innerHTML = '<div class="d-hero"><h2>No columns yet</h2><p>Each product gets a column. Add the first one and its slips will line up underneath.</p><button class="btn btn-primary" type="button" id="d-first">Add a product</button></div>';
+      $("#d-first").addEventListener("click", openSettings);
+      $("#d-tabs").innerHTML = "";
+    } else {
+      board.innerHTML = products.map(column).join("");
+      $("#d-tabs").innerHTML = products.map(function (p) { return '<button class="d-chip" type="button" data-jump="' + p.id + '">' + esc(p.name) + '</button>'; }).join("");
+    }
+    renderMoney();
+    if (focusSel) { var el = $(focusSel); if (el) el.focus(); }
+  }
+  function showLoading() { $("#d-board").innerHTML = '<div class="d-skel" aria-label="Loading"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>'; }
+
+  function punch(id, target, focusSel) {
+    var before = store.order(id).received;
+    var r = store.attempt(function () { return store.setReceived(id, target); });
+    if (!r.ok) { toast(r.error); return; }
+    var v = r.value;
+    ui.hit = id; setTimeout(function () { ui.hit = null; }, 300);
+    toast(v.purchaser + ": " + qty(v.received) + " of " + qty(v.ordered) + (v.fulfilled ? " — done" : ""), function () {
+      store.setReceived(id, before); render();
+    });
+    render(focusSel);
+  }
+
+  $("#d-board").addEventListener("click", function (e) {
+    var t = e.target.closest("button"); if (!t) return;
+    var li = t.closest("[data-id]"); var id = li ? Number(li.dataset.id) : null;
+    if (t.dataset.pip) {
+      var o = store.order(id), i = Number(t.dataset.pip);
+      var target = i === o.received ? i - 1 : i;
+      punch(id, target, '[data-id="' + id + '"] [data-pip="' + i + '"]');
+      return;
+    }
+    if (t.dataset.step) { var o2 = store.order(id); punch(id, Math.max(0, Math.min(o2.ordered, o2.received + Number(t.dataset.step))), '[data-id="' + id + '"] [data-step="' + t.dataset.step + '"]'); return; }
+    if (t.hasAttribute("data-edit")) { openEdit(store.order(id)); return; }
+    if (t.dataset.add) { ui.adding[t.dataset.add] = true; render('[data-add-form="' + t.dataset.add + '"] [data-f="purchaser"]'); return; }
+    if (t.dataset.addCancel) { ui.adding[t.dataset.addCancel] = false; ui.addErr[t.dataset.addCancel] = ""; render('[data-add="' + t.dataset.addCancel + '"]'); return; }
+    if (t.dataset.m) { $$("[data-m]", t.parentNode).forEach(function (b) { b.setAttribute("aria-checked", b === t); }); return; }
+  });
+  $("#d-board").addEventListener("submit", function (e) {
+    var form = e.target.closest("[data-add-form]"); if (!form) return;
+    e.preventDefault();
+    var pid = Number(form.dataset.addForm);
+    var method = ($('[data-m][aria-checked="true"]', form) || {}).dataset.m;
+    var r = store.attempt(function () { return store.addOrder({ purchaser: $('[data-f="purchaser"]', form).value, qty: $('[data-f="qty"]', form).value, product: pid, method: method }); });
+    if (!r.ok) { ui.addErr[pid] = r.error; render('[data-add-form="' + pid + '"] [data-f="' + (/quantity/.test(r.error) ? "qty" : "purchaser") + '"]'); return; }
+    ui.addErr[pid] = ""; ui.adding[pid] = false; ui.newest = r.value.id;
+    toast("Logged " + r.value.purchaser + " — " + qty(r.value.ordered) + " " + r.value.unit + " of " + r.value.product);
+    render('[data-id="' + r.value.id + '"] .d-pip, [data-id="' + r.value.id + '"] [data-step="1"]');
+    setTimeout(function () { ui.newest = null; var s = $('[data-id="' + r.value.id + '"]'); if (s) s.classList.remove("is-new"); }, 2500);
+  });
+  $("#d-board").addEventListener("change", function (e) {
+    var sel = e.target.closest("[data-method]"); if (!sel) return;
+    var id = Number(sel.closest("[data-id]").dataset.id);
+    var r = store.attempt(function () { return store.setMethod(id, sel.value); });
+    if (!r.ok) { toast(r.error); return; }
+    toast(r.value.purchaser + " now paid by " + ST.cap(r.value.method)); render('[data-id="' + id + '"] [data-method]');
+  });
+  $("#d-board").addEventListener("keydown", function (e) {
+    var typed = e.target.closest("[data-typed]");
+    if (typed && e.key === "Enter") { e.preventDefault(); var id = Number(typed.closest("[data-id]").dataset.id); punch(id, typed.value, '[data-id="' + id + '"] [data-typed]'); return; }
+    var pip = e.target.closest("[data-pip]");
+    if (pip && (e.key === "ArrowRight" || e.key === "ArrowLeft")) {
+      var sib = e.key === "ArrowRight" ? pip.nextElementSibling : pip.previousElementSibling;
+      if (sib) { sib.focus(); e.preventDefault(); }
+    }
+  });
+  $$("[data-show]").forEach(function (b) { b.addEventListener("click", function () { ui.show = b.dataset.show; $$("[data-show]").forEach(function (x) { x.setAttribute("aria-pressed", x === b); }); render(); }); });
+  $("#d-search").addEventListener("input", function () { ui.search = this.value.trim(); render(); });
+  $("#d-tabs").addEventListener("click", function (e) { var b = e.target.closest("[data-jump]"); if (b) { var col = $('[data-col="' + b.dataset.jump + '"]'); if (col) col.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" }); } });
+
+  // Drawer
+  $("#d-tiles").innerHTML = ST.DENOMINATIONS.map(function (d) {
+    return '<div class="d-tile"><span class="den">$' + d + '</span><div class="ctl"><button class="btn" type="button" data-bill="' + d + '" data-delta="-1" aria-label="One fewer $' + d + ' bill">−</button><input class="input" data-count="' + d + '" aria-label="Number of $' + d + ' bills" inputmode="numeric" value=""><button class="btn" type="button" data-bill="' + d + '" data-delta="1" aria-label="One more $' + d + ' bill">+</button></div><span class="sub" data-sub="' + d + '">$0.00</span></div>';
+  }).join("");
+  $("#d-tiles").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-bill]"); if (!b) return;
+    var input = $('[data-count="' + b.dataset.bill + '"]');
+    var n = Number(input.value || 0); if (!isFinite(n)) n = 0;
+    input.value = String(Math.max(0, n + Number(b.dataset.delta))) || "";
+    if (input.value === "0") input.value = "";
+    renderMoney();
+  });
+  $("#d-tiles").addEventListener("input", renderMoney);
+  function renderMoney() {
+    var f = store.financials();
+    $("#d-m-expected").textContent = money(f.cashCollected);
+    var counts = {}, any = false;
+    $$("[data-count]").forEach(function (i) { counts[i.dataset.count] = i.value; if (i.value.trim()) any = true; var n = Number(i.value); $('[data-sub="' + i.dataset.count + '"]').textContent = money(isFinite(n) && n === Math.floor(n) && n >= 0 ? n * Number(i.dataset.count) : 0); });
+    var v = $("#d-verdict");
+    if (!any) { $("#d-m-counted").textContent = money(0); v.className = "d-verdict"; v.innerHTML = "<strong>Count the bills to compare.</strong>"; return; }
+    var r = store.attempt(function () { return store.reconcile(counts); });
+    if (!r.ok) { $("#d-m-counted").textContent = "—"; v.className = "d-verdict bad"; v.innerHTML = "<strong>" + esc(r.error) + "</strong>"; return; }
+    $("#d-m-counted").textContent = money(r.value.counted);
+    v.className = "d-verdict " + (r.value.balanced ? "ok" : "bad");
+    v.innerHTML = "<strong>" + esc(r.value.headline) + "</strong>" + (r.value.note ? "<span>" + esc(r.value.note) + "</span>" : "");
+  }
+
+  // Edit dialog
+  var editing = null;
+  $$("dialog").forEach(function (dlg) { $$("[data-close]", dlg).forEach(function (b) { b.addEventListener("click", function () { dlg.close(); }); }); });
+  function openEdit(o) {
+    editing = o.id;
+    $("#d-edit-hint").textContent = qty(o.received) + " already handed over; the quantity cannot go below that. Paid by is on the slip itself.";
+    $("#d-ef-purchaser").value = o.purchaser;
+    $("#d-ef-product").innerHTML = store.products().map(function (p) { return '<option value="' + esc(p.name) + '"' + (p.id === o.productId ? " selected" : "") + '>' + esc(p.name) + '</option>'; }).join("");
+    $("#d-ef-qty").value = qty(o.ordered); $("#d-ef-error").textContent = "";
+    $("#d-edit").showModal(); $("#d-ef-purchaser").focus();
+  }
+  $("#d-edit-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var r = store.attempt(function () { return store.editOrder(editing, { purchaser: $("#d-ef-purchaser").value, product: $("#d-ef-product").value, qty: $("#d-ef-qty").value }); });
+    if (!r.ok) { $("#d-ef-error").textContent = r.error; return; }
+    $("#d-edit").close(); toast("Updated " + r.value.purchaser + "’s slip"); render('[data-id="' + r.value.id + '"] [data-edit]');
+  });
+
+  // Settings
+  function renderSettings() {
+    $("#d-units").innerHTML = ST.UNITS.map(function (u) { return '<option value="' + u + '">'; }).join("");
+    $("#d-set-order").innerHTML = store.orders().map(function (o) { return '<option value="' + o.id + '">#' + o.id + ' ' + esc(o.purchaser) + ' · ' + esc(o.product) + '</option>'; }).join("") || '<option value="">No slips</option>';
+    $("#d-set-product").innerHTML = store.products().map(function (p) { return '<option value="' + p.id + '">' + esc(p.name) + ' (' + store.ordersFor(p.id) + ' slips)</option>'; }).join("") || '<option value="">No products</option>';
+  }
+  function openSettings() { renderSettings(); $("#d-set-error").textContent = ""; $("#d-pf-error").textContent = ""; $("#d-settings").showModal(); $("#d-pf-name").focus(); }
+  $("#d-settings-btn").addEventListener("click", openSettings);
+  $("#d-product-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var r = store.attempt(function () { return store.addProduct({ name: $("#d-pf-name").value, unit: $("#d-pf-unit").value, price: $("#d-pf-price").value }); });
+    if (!r.ok) { $("#d-pf-error").textContent = r.error; $("#d-pf-name").focus(); return; }
+    $("#d-pf-name").value = ""; $("#d-pf-unit").value = ""; $("#d-pf-price").value = ""; $("#d-pf-error").textContent = "";
+    renderSettings(); toast("Added a column for " + r.value.name);
+  });
+  function gated(fn, done) {
+    if ($("#d-set-unlock").value.trim() !== "RESET") { $("#d-set-error").textContent = "Type RESET in the unlock box first so this cannot happen by accident."; $("#d-set-unlock").focus(); return; }
+    var r = store.attempt(fn); if (!r.ok) { $("#d-set-error").textContent = r.error; return; }
+    $("#d-set-error").textContent = ""; renderSettings(); toast(done(r.value));
+  }
+  $("#d-set-del-order").addEventListener("click", function () { var id = $("#d-set-order").value; if (id) gated(function () { return store.deleteOrder(id); }, function (o) { return "Deleted " + o.purchaser + "’s slip."; }); });
+  $("#d-set-del-product").addEventListener("click", function () { var id = $("#d-set-product").value; if (id) gated(function () { return store.deleteProduct(id); }, function (p) { return "Deleted " + p.name + "."; }); });
+  $("#d-set-reset-orders").addEventListener("click", function () { gated(function () { return store.resetOrders(); }, function (n) { return "Cleared " + n + " slip(s)."; }); });
+  $("#d-set-reset-all").addEventListener("click", function () { gated(function () { store.resetAll(); }, function () { return "Products and slips were cleared."; }); });
+
+  store.subscribe(function () { if (ui.loaded) render(); });
+  ST.boot(showLoading, function () { ui.loaded = true; render(); });
+})();
+</script>
